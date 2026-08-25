@@ -1,6 +1,6 @@
 import React from 'react';
 import { useDashboard } from '../../context/DashboardContext';
-import { FolderKanban, Eye, Building2 } from 'lucide-react';
+import { FolderKanban, Eye, Building2, RefreshCw, CheckCircle2 } from 'lucide-react';
 
 export default function Navbar() {
   const {
@@ -9,21 +9,23 @@ export default function Navbar() {
     setActiveProjectId,
     activeProject,
     portalMode,
-    viewClientDashboard
+    viewClientDashboard,
+    syncProjectFromGoogleSheet,
+    isSyncing
   } = useDashboard();
 
   return (
     <header
       style={{
-        height: '120px',
-        minHeight: '120px',
+        height: '96px',
+        minHeight: '96px',
         flexShrink: 0,
         borderBottom: '1px solid var(--border-color)',
         background: 'var(--bg-sidebar)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
-        padding: '0 36px',
+        padding: '0 32px',
         position: 'sticky',
         top: 0,
         zIndex: 50,
@@ -69,7 +71,7 @@ export default function Navbar() {
           </div>
         </div>
       ) : (
-        /* Client Mode: Clean, Medium-Sized, Vertically Centered Client Branding */
+        /* Client Mode: Clean Client Branding */
         <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
           <div
             style={{
@@ -99,8 +101,34 @@ export default function Navbar() {
         </div>
       )}
 
-      {/* Right Section: Only "View Client Dashboard" when in admin mode */}
+      {/* Right Section: Sync Button & View Switcher */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+        {/* Quick Sync Button if project has Google Sheet URL */}
+        {activeProject?.googleSheetUrl && (
+          <button
+            onClick={() => syncProjectFromGoogleSheet(activeProject.id)}
+            disabled={isSyncing}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              background: 'rgba(16, 185, 129, 0.1)',
+              color: '#10B981',
+              border: '1px solid rgba(16, 185, 129, 0.3)',
+              borderRadius: '8px',
+              padding: '8px 14px',
+              fontSize: '0.8125rem',
+              fontWeight: 700,
+              cursor: isSyncing ? 'not-allowed' : 'pointer',
+              transition: 'all 0.2s ease'
+            }}
+            title={activeProject.lastSyncedAt ? `Last synced: ${activeProject.lastSyncedAt}` : 'Sync latest live data from Google Sheet'}
+          >
+            <RefreshCw size={14} className={isSyncing ? 'animate-spin' : ''} />
+            <span>{isSyncing ? 'Syncing...' : 'Sync Live Sheet 🔄'}</span>
+          </button>
+        )}
+
         {portalMode === 'admin' && (
           <button
             className="btn btn-primary btn-sm"

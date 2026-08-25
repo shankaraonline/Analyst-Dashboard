@@ -6,6 +6,7 @@ import InstagramView from './views/InstagramView';
 import YouTubeView from './views/YouTubeView';
 import LinkedInView from './views/LinkedInView';
 import FacebookView from './views/FacebookView';
+import DynamicCategoryView from './views/DynamicCategoryView';
 import AdminUploadView from './views/AdminUploadView';
 
 function DashboardContent() {
@@ -46,7 +47,8 @@ function DashboardContent() {
       case 'admin':
         return <AdminUploadView />;
       default:
-        return <OverviewView />;
+        // Render dynamic category view for any custom channel (WhatsApp, Website, etc.)
+        return <DynamicCategoryView categoryKey={currentView} />;
     }
   };
 

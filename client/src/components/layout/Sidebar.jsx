@@ -4,9 +4,12 @@ import {
   LayoutDashboard,
   UploadCloud,
   Eye,
-  Settings
+  Settings,
+  Globe,
+  MessageSquare,
+  BarChart2
 } from 'lucide-react';
-import { InstagramIcon, YoutubeIcon, LinkedinIcon, FacebookIcon } from '../common/SocialIcons';
+import { InstagramIcon, YoutubeIcon, LinkedinIcon, FacebookIcon, WhatsappIcon, WebsiteIcon, CustomChannelIcon } from '../common/SocialIcons';
 
 export default function Sidebar() {
   const {
@@ -18,13 +21,39 @@ export default function Sidebar() {
     viewAdminPortal
   } = useDashboard();
 
-  const navItems = [
-    { id: 'overview', label: 'Omnichannel Overview', icon: LayoutDashboard },
-    { id: 'facebook', label: 'Facebook Page', icon: FacebookIcon, color: '#1877F2' },
-    { id: 'instagram', label: 'Instagram Insights', icon: InstagramIcon, color: '#E1306C' },
-    { id: 'youtube', label: 'YouTube Analytics', icon: YoutubeIcon, color: '#FF0000' },
-    { id: 'linkedin', label: 'LinkedIn B2B', icon: LinkedinIcon, color: '#0A66C2' }
-  ];
+  // Dynamic navigation items based on active project's categories
+  const navItems = React.useMemo(() => {
+    const items = [
+      { id: 'overview', label: 'Omnichannel Overview', icon: LayoutDashboard, color: 'var(--accent-primary)' }
+    ];
+
+    const projectCats = activeProject?.categories || ['facebook', 'instagram', 'youtube', 'linkedin'];
+
+    const iconMap = {
+      facebook: { label: 'Facebook Page', icon: FacebookIcon, color: '#1877F2' },
+      instagram: { label: 'Instagram Insights', icon: InstagramIcon, color: '#E1306C' },
+      youtube: { label: 'YouTube Analytics', icon: YoutubeIcon, color: '#FF0000' },
+      linkedin: { label: 'LinkedIn B2B', icon: LinkedinIcon, color: '#0A66C2' },
+      whatsapp: { label: 'WhatsApp Marketing', icon: WhatsappIcon, color: '#25D366' },
+      website_audits: { label: 'Website Audits', icon: WebsiteIcon, color: '#8B5CF6' }
+    };
+
+    projectCats.forEach(cat => {
+      if (iconMap[cat]) {
+        items.push({ id: cat, ...iconMap[cat] });
+      } else {
+        const cleanLabel = cat.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+        items.push({
+          id: cat,
+          label: cleanLabel,
+          icon: CustomChannelIcon,
+          color: '#6366F1'
+        });
+      }
+    });
+
+    return items;
+  }, [activeProject]);
 
   return (
     <aside
@@ -132,7 +161,7 @@ export default function Sidebar() {
         </div>
       </div>
 
-      {/* Bottom Section: Client View Status + Admin Switcher or Admin Quick Jump */}
+      {/* Bottom Section: Client View Status + Admin Switcher */}
       <div>
         {portalMode === 'client' ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
