@@ -1,30 +1,21 @@
-import React, { useState, useRef } from 'react';
-import { useDashboard, AVAILABLE_VERTICAL_PRESETS } from '../context/DashboardContext';
-import { parseExcelWorkbookFile, parsePastedExcelText } from '../utils/excelParser';
+import React, { useState } from 'react';
+import { useDashboard } from '../context/DashboardContext';
+import { getTabIconComponent } from './UniversalTabView';
+import { cleanValue, inferColumnType } from '../utils/googleSheetSync';
 import {
-  UploadCloud,
   Plus,
-  FileSpreadsheet,
-  ClipboardPaste,
   ArrowRight,
   Eye,
   RefreshCw,
   Trash2,
   Link,
   CheckCircle2,
-  Globe,
-  Settings,
-  ExternalLink
+  Layers,
+  ExternalLink,
+  ClipboardPaste,
+  Table,
+  Save
 } from 'lucide-react';
-import {
-  FacebookIcon,
-  InstagramIcon,
-  YoutubeIcon,
-  LinkedinIcon,
-  WhatsappIcon,
-  WebsiteIcon,
-  CustomChannelIcon
-} from '../components/common/SocialIcons';
 
 export default function AdminUploadView() {
   const {
@@ -34,79 +25,45 @@ export default function AdminUploadView() {
     createNewProject,
     deleteProject,
     activeProject,
+    activeTabs,
     sheetData,
-    updatePlatformData,
-    clearProjectData,
     viewClientDashboard,
     syncProjectFromGoogleSheet,
     updateProjectSettings,
+    addCustomTab,
+    deleteTab,
     isSyncing,
     showNotification,
-    allVerticals,
-    addCustomVertical,
-    deleteCustomVertical
+    setCurrentView
   } = useDashboard();
 
   // Create Project State
   const [newProjName, setNewProjName] = useState('');
   const [newProjWebsite, setNewProjWebsite] = useState('');
   const [newProjSheetUrl, setNewProjSheetUrl] = useState('');
-  const [newProjCategories, setNewProjCategories] = useState(['facebook', 'instagram', 'youtube', 'linkedin']);
-  const [customCatInput, setCustomCatInput] = useState('');
 
   // Active Project Google Sheet URL edit state
   const [editingSheetUrl, setEditingSheetUrl] = useState(activeProject?.googleSheetUrl || '');
-  const [isEditingSettings, setIsEditingSettings] = useState(false);
 
-  // Excel File Upload State
-  const [isUploading, setIsUploading] = useState(false);
-  const [lastUploadedFile, setLastUploadedFile] = useState(null);
-  const fileInputRef = useRef(null);
-
-  // Direct Excel Copy-Paste State
-  const [pastePlatform, setPastePlatform] = useState('instagram');
-  const [pastedText, setPastedText] = useState('');
+  // Direct Table Insertion / Paste State
+  const [targetTabOption, setTargetTabOption] = useState('new'); // 'new' | existing tabId
+  const [customTabName, setCustomTabName] = useState('');
+  const [pastedRawText, setPastedRawText] = useState('');
+  const [assignedColumns, setAssignedColumns] = useState([]);
+  const [previewPastedRows, setPreviewPastedRows] = useState([]);
+  const [isImporting, setIsImporting] = useState(false);
 
   // Sync editingSheetUrl when activeProject changes
   React.useEffect(() => {
     setEditingSheetUrl(activeProject?.googleSheetUrl || '');
   }, [activeProjectId, activeProject?.googleSheetUrl]);
 
-  // Compute row counts across all project categories
-  const activeCategories = activeProject?.categories || ['facebook', 'instagram', 'youtube', 'linkedin'];
-  let totalRows = 0;
-  activeCategories.forEach(cat => {
-    totalRows += (sheetData[cat]?.length || 0);
-  });
-
   const handleSaveSheetUrlAndSync = async (e) => {
     e.preventDefault();
     if (!editingSheetUrl.trim()) return;
 
-    updateProjectSettings(activeProject.id, { googleSheetUrl: editingSheetUrl.trim() });
-    await syncProjectFromGoogleSheet(activeProject.id, editingSheetUrl.trim());
-  };
-
-  const handleToggleCategory = (catId) => {
-    const current = activeProject?.categories || ['facebook', 'instagram', 'youtube', 'linkedin'];
-    let updated;
-    if (current.includes(catId)) {
-      if (current.length <= 1) {
-        showNotification('At least one channel must remain active.', 'warning');
-        return;
-      }
-      updated = current.filter(c => c !== catId);
-    } else {
-      updated = [...current, catId];
-    }
-    updateProjectSettings(activeProject.id, { categories: updated });
-  };
-
-  const handleAddCustomCategory = (e) => {
-    e.preventDefault();
-    if (!customCatInput.trim()) return;
-    addCustomVertical(customCatInput.trim());
-    setCustomCatInput('');
+    updateProjectSettings(activeProject.id || activeProject._id, { googleSheetUrl: editingSheetUrl.trim() });
+    await syncProjectFromGoogleSheet(activeProject.id || activeProject._id, editingSheetUrl.trim());
   };
 
   const handleCreateProject = (e) => {
@@ -115,95 +72,109 @@ export default function AdminUploadView() {
     createNewProject({
       name: newProjName,
       website: newProjWebsite || 'https://example.com',
-      googleSheetUrl: newProjSheetUrl.trim(),
-      categories: newProjCategories
+      googleSheetUrl: newProjSheetUrl.trim()
     });
     setNewProjName('');
     setNewProjWebsite('');
     setNewProjSheetUrl('');
-    setNewProjCategories(['facebook', 'instagram', 'youtube', 'linkedin']);
   };
 
-  const handleFileUpload = async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    setIsUploading(true);
-    try {
-      const parsedData = await parseExcelWorkbookFile(file);
-      
-      let importedCount = 0;
-      Object.keys(parsedData).forEach(plat => {
-        if (parsedData[plat] && parsedData[plat].length > 0) {
-          updatePlatformData(plat, parsedData[plat]);
-          importedCount += parsedData[plat].length;
-        }
-      });
-
-      if (importedCount === 0) {
-        showNotification('No matching platform data detected in this file.', 'warning');
-      } else {
-        setLastUploadedFile({
-          name: file.name,
-          size: Math.round(file.size / 1024),
-          rows: importedCount,
-          time: new Date().toLocaleTimeString()
-        });
-        showNotification(`Successfully imported ${importedCount} rows from "${file.name}"!`);
-      }
-    } catch (err) {
-      console.error('File parsing error:', err);
-      showNotification(`Could not parse Excel file: ${err.message}`, 'danger');
-    } finally {
-      setIsUploading(false);
-      if (fileInputRef.current) fileInputRef.current.value = '';
+  // Direct Table / Cells Paste Parser
+  const handleParsePastedText = (text) => {
+    setPastedRawText(text);
+    if (!text.trim()) {
+      setAssignedColumns([]);
+      setPreviewPastedRows([]);
+      return;
     }
+
+    const lines = text.trim().split(/\r?\n/);
+    if (lines.length === 0) return;
+
+    const firstLine = lines[0];
+    const delimiter = firstLine.includes('\t') ? '\t' : ',';
+
+    const headerCells = firstLine.split(delimiter).map(c => c.replace(/^["']|["']$/g, '').trim());
+    const dataLines = lines.slice(1);
+
+    const cols = headerCells.map((h, idx) => {
+      const key = (h || `col_${idx + 1}`).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+      const sampleVals = dataLines.slice(0, 5).map(line => {
+        const parts = line.split(delimiter);
+        return cleanValue(parts[idx]);
+      });
+      const inferred = inferColumnType(h, sampleVals);
+
+      return {
+        key: key || `col_${idx + 1}`,
+        label: h || `Column ${idx + 1}`,
+        type: inferred,
+        align: inferred === 'date' || inferred === 'text' ? 'left' : 'right'
+      };
+    });
+
+    const parsedRows = dataLines.map((line, rIdx) => {
+      const parts = line.split(delimiter);
+      const rowObj = { _rowId: Date.now() + rIdx };
+      cols.forEach((c, cIdx) => {
+        rowObj[c.key] = cleanValue(parts[cIdx]);
+      });
+      return rowObj;
+    });
+
+    setAssignedColumns(cols);
+    setPreviewPastedRows(parsedRows);
   };
 
-  const handleImportPastedData = (e) => {
-    e.preventDefault();
-    if (!pastedText.trim()) return;
+  const handleUpdateAssignedColumn = (idx, field, value) => {
+    setAssignedColumns(prev => {
+      const copy = [...prev];
+      copy[idx] = { ...copy[idx], [field]: value };
+      return copy;
+    });
+  };
 
-    try {
-      const parsedRows = parsePastedExcelText(pastedText, pastePlatform);
-      if (parsedRows.length === 0) {
-        showNotification('No valid rows found in pasted text.', 'warning');
+  const handleImportTableData = async (e) => {
+    e.preventDefault();
+    if (previewPastedRows.length === 0) {
+      showNotification('Please paste valid table rows first.', 'warning');
+      return;
+    }
+
+    let tabId = targetTabOption;
+    let tabName = customTabName.trim();
+
+    if (targetTabOption === 'new') {
+      if (!tabName) {
+        showNotification('Please enter a tab/channel name.', 'warning');
         return;
       }
+      tabId = tabName.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+    } else {
+      const existing = activeTabs.find(t => t.id === targetTabOption);
+      tabName = existing ? existing.name : targetTabOption;
+    }
 
-      updatePlatformData(pastePlatform, parsedRows);
-      showNotification(`Successfully imported ${parsedRows.length} rows into ${pastePlatform.toUpperCase()}!`);
-      setPastedText('');
+    setIsImporting(true);
+    try {
+      await addCustomTab(tabId, tabName, assignedColumns, previewPastedRows);
+      setPastedRawText('');
+      setAssignedColumns([]);
+      setPreviewPastedRows([]);
+      setCustomTabName('');
+      setTargetTabOption('new');
     } catch (err) {
-      console.error('Paste import error:', err);
-      showNotification(`Error importing pasted data: ${err.message}`, 'danger');
+      console.error('Import error:', err);
+      showNotification('Failed to save table.', 'error');
+    } finally {
+      setIsImporting(false);
     }
-  };
-
-  const getCategoryIcon = (catId) => {
-    switch (catId) {
-      case 'facebook': return <FacebookIcon size={18} color="#1877F2" />;
-      case 'instagram': return <InstagramIcon size={18} color="#E1306C" />;
-      case 'youtube': return <YoutubeIcon size={18} color="#FF0000" />;
-      case 'linkedin': return <LinkedinIcon size={18} color="#0A66C2" />;
-      case 'whatsapp': return <WhatsappIcon size={18} color="#25D366" />;
-      case 'website_audits': return <WebsiteIcon size={18} color="#8B5CF6" />;
-      default: return <CustomChannelIcon size={18} color="#6366F1" />;
-    }
-  };
-
-  const getCategoryLabel = (catId) => {
-    const found = allVerticals?.find(p => p.id === catId);
-    if (found) return found.label;
-    const preset = AVAILABLE_VERTICAL_PRESETS.find(p => p.id === catId);
-    if (preset) return preset.label;
-    return catId.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
   };
 
   return (
     <div className="animate-fade-in" style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
 
-      {/* 1. Google Sheet 1-Click Live Sync Card (Primary Feature) */}
+      {/* 1. Google Sheet 1-Click Live Sync Card */}
       <div
         style={{
           background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.05) 0%, rgba(16, 185, 129, 0.05) 100%)',
@@ -221,14 +192,14 @@ export default function AdminUploadView() {
             <div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <h3 style={{ fontSize: '1.15rem', color: 'var(--text-primary)', margin: 0, fontWeight: 700 }}>
-                  Live Google Sheet Direct Sync
+                  Multi-Tab Google Sheet Direct Sync
                 </h3>
                 <span className="badge badge-success" style={{ fontSize: '0.7rem', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                  <CheckCircle2 size={12} /> Automatic Auto-Sync
+                  <CheckCircle2 size={12} /> Auto Tab Discovery
                 </span>
               </div>
               <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '3px 0 0 0' }}>
-                Connect your monthly Google Sheet. Every tab maps directly to its channel dashboard automatically.
+                Paste your Google Sheet link. Every tab in your sheet will automatically become a distinct channel ledger in the sidebar.
               </p>
             </div>
           </div>
@@ -271,13 +242,13 @@ export default function AdminUploadView() {
             }}
           >
             <RefreshCw size={16} className={isSyncing ? 'animate-spin' : ''} />
-            <span>{isSyncing ? 'Syncing All Tabs...' : 'Sync Live Sheet Now 🔄'}</span>
+            <span>{isSyncing ? 'Discovering & Syncing Tabs...' : 'Sync Live Sheet Now 🔄'}</span>
           </button>
         </form>
 
         <div style={{ marginTop: '12px', fontSize: '0.75rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '8px' }}>
           <span style={{ fontWeight: 700, color: '#38BDF8' }}>Tip:</span>
-          <span>Ensure Google Sheet link sharing is set to <strong>"Anyone with the link can view"</strong>. No API tokens or OAuth setup required!</span>
+          <span>Ensure Google Sheet link sharing is set to <strong>"Anyone with the link can view"</strong>.</span>
           {activeProject?.googleSheetUrl && (
             <a
               href={activeProject.googleSheetUrl}
@@ -285,207 +256,247 @@ export default function AdminUploadView() {
               rel="noopener noreferrer"
               style={{ color: '#6366F1', display: 'flex', alignItems: 'center', gap: '4px', textDecoration: 'none', fontWeight: 600, marginLeft: 'auto' }}
             >
-              Open Sheet <ExternalLink size={12} />
+              Open Google Sheet <ExternalLink size={12} />
             </a>
           )}
         </div>
       </div>
 
-      {/* 2. Active Channels & Categories Configuration */}
+      {/* 2. Direct Table Insertion & Column Assignment (Beside Google Sheet sync) */}
       <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '22px', boxShadow: 'var(--shadow-sm)' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', flexWrap: 'wrap', gap: '8px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '14px' }}>
+          <div style={{ width: '38px', height: '38px', borderRadius: '10px', background: 'rgba(99, 102, 241, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#6366F1' }}>
+            <ClipboardPaste size={20} />
+          </div>
           <div>
-            <h3 style={{ fontSize: '1rem', color: 'var(--text-primary)', margin: 0, fontWeight: 700 }}>
-              📂 Active Channels & Verticals for <span style={{ color: '#38BDF8' }}>{activeProject?.name}</span>
+            <h3 style={{ fontSize: '1.05rem', color: 'var(--text-primary)', margin: 0, fontWeight: 700 }}>
+              Manual Table Insertion & Column Assignment
             </h3>
             <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-              Enable or disable which verticals to track for this workspace. Custom verticals stay in your library.
+              Paste table rows directly, assign/configure column headers & data types, and save to MongoDB.
             </span>
           </div>
         </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '12px', marginBottom: '16px' }}>
-          {(allVerticals || AVAILABLE_VERTICAL_PRESETS).map(preset => {
-            const isActive = activeCategories.includes(preset.id);
-            const rowCount = sheetData[preset.id]?.length || 0;
-            return (
-              <div
-                key={preset.id}
-                onClick={() => handleToggleCategory(preset.id)}
-                style={{
-                  padding: '14px',
-                  background: isActive ? 'var(--bg-card-inner)' : 'transparent',
-                  borderRadius: '10px',
-                  border: `1px solid ${isActive ? '#6366F1' : 'var(--border-color)'}`,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  cursor: 'pointer',
-                  opacity: isActive ? 1 : 0.6,
-                  transition: 'all 0.15s ease'
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                  {getCategoryIcon(preset.id)}
-                  <div>
-                    <div style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--text-primary)' }}>{preset.label}</div>
-                    <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{rowCount} monthly rows</div>
-                  </div>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  <span className={isActive ? 'badge badge-success' : 'badge'} style={{ fontSize: '0.65rem' }}>
-                    {isActive ? 'Enabled' : 'Disabled'}
-                  </span>
-                  {preset.isCustom && (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (window.confirm(`Delete "${preset.label}" from all verticals?`)) {
-                          deleteCustomVertical(preset.id);
-                        }
-                      }}
-                      style={{
-                        background: 'transparent',
-                        border: 'none',
-                        color: '#EF4444',
-                        cursor: 'pointer',
-                        padding: '4px',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        borderRadius: '4px',
-                        opacity: 0.75,
-                        transition: 'opacity 0.15s ease'
-                      }}
-                      onMouseEnter={(e) => e.currentTarget.style.opacity = '1'}
-                      onMouseLeave={(e) => e.currentTarget.style.opacity = '0.75'}
-                      title={`Remove "${preset.label}" custom vertical`}
-                    >
-                      <Trash2 size={13} />
-                    </button>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-
-        {/* Add Custom Vertical Category Form */}
-        <form onSubmit={handleAddCustomCategory} style={{ display: 'flex', gap: '10px', alignItems: 'center', maxWidth: '480px' }}>
-          <input
-            type="text"
-            className="form-input"
-            placeholder="Add custom channel (e.g. SEO Audits, Email Marketing)..."
-            value={customCatInput}
-            onChange={(e) => setCustomCatInput(e.target.value)}
-            style={{ fontSize: '0.8rem', padding: '6px 12px' }}
-          />
-          <button type="submit" className="btn btn-outline btn-sm" style={{ whiteSpace: 'nowrap' }}>
-            <Plus size={14} /> Add Vertical
-          </button>
-        </form>
-      </div>
-
-      {/* 3. Manual Upload & Paste Fallbacks */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: '20px' }}>
-        {/* Upload Excel / CSV File */}
-        <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '22px', boxShadow: 'var(--shadow-sm)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '14px' }}>
-            <div style={{ width: '36px', height: '36px', borderRadius: '10px', background: 'rgba(16, 185, 129, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#10B981' }}>
-              <UploadCloud size={20} />
-            </div>
-            <div>
-              <h3 style={{ fontSize: '1.05rem', color: 'var(--text-primary)', margin: 0 }}>Manual Excel / CSV File Upload</h3>
-              <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Upload local offline files (multi-tab & matrices supported)</span>
-            </div>
-          </div>
-
-          <div
-            onClick={() => fileInputRef.current?.click()}
-            style={{
-              border: '2px dashed var(--border-color-subtle)',
-              borderRadius: '12px',
-              padding: '26px 20px',
-              textAlign: 'center',
-              cursor: 'pointer',
-              background: 'var(--bg-card-inner)',
-              transition: 'all 0.2s ease'
-            }}
-            onMouseEnter={(e) => e.currentTarget.style.borderColor = '#6366F1'}
-            onMouseLeave={(e) => e.currentTarget.style.borderColor = 'var(--border-color-subtle)'}
-          >
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".xlsx,.xls,.csv"
-              style={{ display: 'none' }}
-              onChange={handleFileUpload}
-            />
-            <FileSpreadsheet size={30} color="#6366F1" style={{ margin: '0 auto 8px' }} />
-            <div style={{ fontSize: '0.875rem', fontWeight: 700, color: 'var(--text-primary)' }}>
-              {isUploading ? 'Parsing & Ingesting...' : 'Click to select Excel (.xlsx) file'}
-            </div>
-          </div>
-
-          {lastUploadedFile && (
-            <div style={{ marginTop: '12px', background: 'rgba(16, 185, 129, 0.1)', border: '1px solid rgba(16, 185, 129, 0.3)', borderRadius: '8px', padding: '8px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.75rem' }}>
-              <span style={{ color: '#10B981', fontWeight: 600 }}>
-                ✓ Ingested "{lastUploadedFile.name}" ({lastUploadedFile.rows} rows)
-              </span>
-              <span style={{ color: 'var(--text-muted)' }}>{lastUploadedFile.time}</span>
-            </div>
-          )}
-        </div>
-
-        {/* Direct Paste from Excel */}
-        <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '22px', boxShadow: 'var(--shadow-sm)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '14px' }}>
-            <div style={{ width: '36px', height: '36px', borderRadius: '10px', background: 'rgba(99, 102, 241, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#6366F1' }}>
-              <ClipboardPaste size={20} />
-            </div>
-            <div>
-              <h3 style={{ fontSize: '1.05rem', color: 'var(--text-primary)', margin: 0 }}>Paste Rows Directly from Clipboard</h3>
-              <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Copy cells in Excel / Google Sheets and paste here</span>
-            </div>
-          </div>
-
-          <form onSubmit={handleImportPastedData} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-            <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-              <label style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontWeight: 600 }}>Target Channel:</label>
+        <form onSubmit={handleImportTableData} style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+          {/* Target Tab Selection */}
+          <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'center' }}>
+            <div style={{ flex: '1', minWidth: '220px' }}>
+              <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-secondary)', fontWeight: 600, marginBottom: '4px' }}>
+                Target Channel / Tab:
+              </label>
               <select
                 className="form-select"
-                style={{ padding: '4px 10px', fontSize: '0.8rem', width: 'auto' }}
-                value={pastePlatform}
-                onChange={(e) => setPastePlatform(e.target.value)}
+                style={{ width: '100%', fontSize: '0.8rem', padding: '6px 12px' }}
+                value={targetTabOption}
+                onChange={(e) => setTargetTabOption(e.target.value)}
               >
-                {activeCategories.map(cat => (
-                  <option key={cat} value={cat}>{getCategoryLabel(cat)}</option>
+                <option value="new">➕ Create New Custom Tab</option>
+                {activeTabs.map(t => (
+                  <option key={t.id} value={t.id}>{t.name} (Replace / Append)</option>
                 ))}
               </select>
             </div>
 
+            {targetTabOption === 'new' && (
+              <div style={{ flex: '1', minWidth: '220px' }}>
+                <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--text-secondary)', fontWeight: 600, marginBottom: '4px' }}>
+                  New Tab Name: *
+                </label>
+                <input
+                  type="text"
+                  className="form-input"
+                  placeholder="e.g. Sales Q3, Lead Gen, Twitter Ads"
+                  style={{ width: '100%', fontSize: '0.8rem', padding: '6px 12px' }}
+                  value={customTabName}
+                  onChange={(e) => setCustomTabName(e.target.value)}
+                  required={targetTabOption === 'new'}
+                />
+              </div>
+            )}
+          </div>
+
+          {/* Paste Textarea */}
+          <div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+              <label style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontWeight: 600 }}>
+                Paste Table Cells (from Excel, Google Sheets, or CSV):
+              </label>
+              <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                Includes column headers on row 1
+              </span>
+            </div>
             <textarea
               className="form-input"
-              rows={3}
-              style={{ fontSize: '0.75rem', fontFamily: 'monospace', resize: 'vertical' }}
-              placeholder="Paste copied cells here..."
-              value={pastedText}
-              onChange={(e) => setPastedText(e.target.value)}
+              rows={4}
+              style={{ width: '100%', fontFamily: 'inherit', fontSize: '0.8rem', resize: 'vertical' }}
+              placeholder="Copy cells from your spreadsheet (including headers) and paste here (Ctrl+V)..."
+              value={pastedRawText}
+              onChange={(e) => handleParsePastedText(e.target.value)}
             />
+          </div>
 
-            <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-              <button
-                type="submit"
-                className="btn btn-primary btn-sm"
-                disabled={!pastedText.trim()}
-                style={{ opacity: !pastedText.trim() ? 0.5 : 1 }}
-              >
-                Import into {pastePlatform.toUpperCase()} <ArrowRight size={14} />
-              </button>
+          {/* Column Assignor Grid */}
+          {assignedColumns.length > 0 && (
+            <div style={{ background: 'var(--bg-main)', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '16px' }}>
+              <div style={{ fontSize: '0.85rem', fontWeight: 700, color: 'var(--text-primary)', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <Table size={16} color="#6366F1" />
+                <span>Assign Column Headers & Data Types ({assignedColumns.length} columns detected)</span>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '10px' }}>
+                {assignedColumns.map((col, idx) => (
+                  <div
+                    key={idx}
+                    style={{
+                      background: 'var(--bg-card)',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: '8px',
+                      padding: '10px'
+                    }}
+                  >
+                    <input
+                      type="text"
+                      className="form-input"
+                      style={{ fontSize: '0.78rem', padding: '4px 8px', marginBottom: '6px', fontWeight: 700 }}
+                      value={col.label}
+                      onChange={(e) => handleUpdateAssignedColumn(idx, 'label', e.target.value)}
+                    />
+                    <select
+                      className="form-select"
+                      style={{ fontSize: '0.75rem', padding: '4px 8px', width: '100%' }}
+                      value={col.type}
+                      onChange={(e) => handleUpdateAssignedColumn(idx, 'type', e.target.value)}
+                    >
+                      <option value="metric">Volume Metric (Reach/Views)</option>
+                      <option value="currency">Currency (₹ Spend/Cost)</option>
+                      <option value="percent">Percentage (%)</option>
+                      <option value="date">Date / Month</option>
+                      <option value="plusMetric">Gained / Plus Metric (+)</option>
+                      <option value="number">Total / Number</option>
+                      <option value="text">General Text</option>
+                    </select>
+                  </div>
+                ))}
+              </div>
             </div>
-          </form>
+          )}
+
+          {/* Preview of Parsed Rows */}
+          {previewPastedRows.length > 0 && (
+            <div style={{ maxHeight: '160px', overflowY: 'auto', border: '1px solid var(--border-color)', borderRadius: '8px' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.75rem' }}>
+                <thead>
+                  <tr style={{ background: 'var(--bg-table-header)' }}>
+                    {assignedColumns.map((c, i) => (
+                      <th key={i} style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 700 }}>
+                        {c.label} ({c.type})
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {previewPastedRows.slice(0, 5).map((r, ri) => (
+                    <tr key={ri} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                      {assignedColumns.map((c, ci) => (
+                        <td key={ci} style={{ padding: '6px 10px', textAlign: 'right' }}>
+                          {String(r[c.key] || '-')}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <button
+              type="submit"
+              className="btn btn-primary btn-sm"
+              disabled={previewPastedRows.length === 0 || isImporting}
+              style={{
+                background: 'linear-gradient(135deg, #10B981 0%, #059669 100%)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '8px 18px',
+                fontWeight: 700
+              }}
+            >
+              <Save size={14} />
+              <span>{isImporting ? 'Saving to Database...' : `Save & Insert ${previewPastedRows.length} Rows into Tab`}</span>
+            </button>
+          </div>
+        </form>
+      </div>
+
+      {/* 3. Discovered Tabs for Active Project */}
+      <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: '16px', padding: '22px', boxShadow: 'var(--shadow-sm)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '8px' }}>
+          <div>
+            <h3 style={{ fontSize: '1.05rem', color: 'var(--text-primary)', margin: 0, fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Layers size={18} color="#6366F1" />
+              <span>Active Spreadsheet Tabs for <span style={{ color: '#38BDF8' }}>{activeProject?.name}</span></span>
+            </h3>
+            <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+              {activeTabs.length} tabs in this project. Click any tab to open its presentation view.
+            </span>
+          </div>
         </div>
+
+        {activeTabs.length > 0 ? (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '12px' }}>
+            {activeTabs.map(tab => {
+              const { icon: TabIcon, color: tColor } = getTabIconComponent(tab.name);
+              const rCount = (sheetData[tab.id] || []).length || tab.rowCount || 0;
+              const colCount = tab.columns?.length || 0;
+              return (
+                <div
+                  key={tab.id}
+                  onClick={() => setCurrentView(tab.id)}
+                  style={{ padding: '16px', background: 'var(--bg-card-inner)', borderRadius: '12px', border: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer', transition: 'all 0.15s ease' }}
+                  onMouseEnter={(e) => e.currentTarget.style.borderColor = tColor}
+                  onMouseLeave={(e) => e.currentTarget.style.borderColor = 'var(--border-color)'}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <div style={{ width: '38px', height: '38px', borderRadius: '10px', background: `${tColor}22`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <TabIcon size={20} color={tColor} />
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '0.9rem', fontWeight: 700, color: 'var(--text-primary)' }}>{tab.name}</div>
+                      <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                        {rCount} monthly rows • {colCount > 0 ? `${colCount} columns` : 'Auto-structured'}
+                      </div>
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <button
+                      className="btn btn-outline btn-sm"
+                      style={{ fontSize: '0.72rem', padding: '4px 8px' }}
+                      onClick={(e) => { e.stopPropagation(); setCurrentView(tab.id); }}
+                    >
+                      View <ArrowRight size={12} />
+                    </button>
+                    {activeTabs.length > 1 && (
+                      <button
+                        style={{ background: 'transparent', border: 'none', color: '#EF4444', cursor: 'pointer', padding: '4px' }}
+                        onClick={(e) => { e.stopPropagation(); if (window.confirm(`Delete tab "${tab.name}"?`)) deleteTab(tab.id); }}
+                        title="Delete Tab"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div style={{ padding: '24px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+            No tabs loaded yet. Paste your Google Sheet URL above or use the table insertion tool to add tabs.
+          </div>
+        )}
       </div>
 
       {/* 4. Projects List & Create Workspace Modal */}
@@ -499,14 +510,14 @@ export default function AdminUploadView() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
             {projects.map(p => (
               <div
-                key={p.id}
+                key={p.id || p._id}
                 style={{
                   display: 'flex',
                   justifyContent: 'space-between',
                   alignItems: 'center',
                   padding: '12px 14px',
-                  background: activeProjectId === p.id ? 'rgba(99, 102, 241, 0.08)' : 'var(--bg-card-inner)',
-                  border: `1px solid ${activeProjectId === p.id ? '#6366F1' : 'var(--border-color)'}`,
+                  background: activeProjectId === (p.id || p._id) ? 'rgba(99, 102, 241, 0.08)' : 'var(--bg-card-inner)',
+                  border: `1px solid ${activeProjectId === (p.id || p._id) ? '#6366F1' : 'var(--border-color)'}`,
                   borderRadius: '10px'
                 }}
               >
@@ -515,21 +526,21 @@ export default function AdminUploadView() {
                     {p.name}
                   </div>
                   <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
-                    Website: {p.website || p.client || 'Direct'} • {p.categories?.length || 4} channels
+                    Website: {p.website || 'Direct'} • {p.tabs?.length || 0} tabs
                   </div>
                 </div>
 
                 <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                   <button
                     className="btn btn-primary btn-sm"
-                    onClick={() => viewClientDashboard(p.id)}
+                    onClick={() => viewClientDashboard(p.id || p._id)}
                     style={{ background: '#10B981', border: 'none', fontWeight: 600, fontSize: '0.75rem' }}
                   >
                     <Eye size={12} /> View
                   </button>
 
-                  {activeProjectId !== p.id && (
-                    <button className="btn btn-outline btn-sm" onClick={() => setActiveProjectId(p.id)} style={{ fontSize: '0.75rem' }}>
+                  {activeProjectId !== (p.id || p._id) && (
+                    <button className="btn btn-outline btn-sm" onClick={() => setActiveProjectId(p.id || p._id)} style={{ fontSize: '0.75rem' }}>
                       Select
                     </button>
                   )}
@@ -537,7 +548,7 @@ export default function AdminUploadView() {
                     <button
                       className="btn btn-outline btn-sm"
                       style={{ color: '#EF4444', fontSize: '0.75rem', padding: '6px 8px' }}
-                      onClick={() => deleteProject(p.id)}
+                      onClick={() => deleteProject(p.id || p._id)}
                       title="Delete Workspace"
                     >
                       <Trash2 size={13} />
@@ -558,12 +569,12 @@ export default function AdminUploadView() {
           <form onSubmit={handleCreateProject} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
             <div>
               <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
-                Project / Campaign Name *
+                Project / Workspace Name *
               </label>
               <input
                 type="text"
                 className="form-input"
-                placeholder="e.g. Art of Living Australia"
+                placeholder="e.g. Art of Living Foundation"
                 value={newProjName}
                 onChange={(e) => setNewProjName(e.target.value)}
                 required
@@ -577,7 +588,7 @@ export default function AdminUploadView() {
               <input
                 type="text"
                 className="form-input"
-                placeholder="e.g. ssrdp.org"
+                placeholder="e.g. artofliving.org"
                 value={newProjWebsite}
                 onChange={(e) => setNewProjWebsite(e.target.value)}
               />
@@ -585,7 +596,7 @@ export default function AdminUploadView() {
 
             <div>
               <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
-                Google Sheet URL (Optional)
+                Google Sheet URL (Optional - Auto-Syncs Tabs)
               </label>
               <input
                 type="url"

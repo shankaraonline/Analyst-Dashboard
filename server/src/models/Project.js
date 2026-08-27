@@ -1,5 +1,10 @@
 import mongoose from 'mongoose';
 
+/**
+ * Lightweight Project Metadata Schema
+ * Stores ONLY Project Name, Website, Description, Color, and Google Sheet Link.
+ * Tab row data is parsed dynamically in-memory and NOT saved in MongoDB to keep the database ultra-lightweight.
+ */
 const ProjectSchema = new mongoose.Schema(
   {
     name: {
@@ -12,9 +17,10 @@ const ProjectSchema = new mongoose.Schema(
       trim: true,
       default: ''
     },
-    categories: {
-      type: [String],
-      default: ['facebook', 'instagram', 'youtube', 'linkedin']
+    description: {
+      type: String,
+      trim: true,
+      default: ''
     },
     googleSheetUrl: {
       type: String,
@@ -29,9 +35,10 @@ const ProjectSchema = new mongoose.Schema(
       type: String,
       default: '#6366F1'
     },
-    description: {
-      type: String,
-      default: ''
+    kpiVisibility: {
+      // { [tabId]: string[] } — admin-selected metric column keys to show in Omnichannel view
+      type: mongoose.Schema.Types.Mixed,
+      default: {}
     }
   },
   {

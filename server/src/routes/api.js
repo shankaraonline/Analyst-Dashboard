@@ -1,20 +1,21 @@
 import { Router } from 'express';
 import { Project } from '../models/Project.js';
 import { fetchAndParseGoogleSheet } from '../services/sheetSyncService.js';
+import { verifyAdminToken } from '../middleware/auth.js';
 
 const router = Router();
 
 // Health Check Endpoint
 router.get('/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString(), service: 'Social Dashboard API' });
+  res.json({ status: 'ok', timestamp: new Date().toISOString(), service: 'Social Dashboard Lightweight API' });
 });
 
 // -------------------------------------------------------------
-// PROJECT CRUD ROUTES (MongoDB Compass / Atlas)
-// Storing only Project metadata, Website, Verticals & Google Sheet URL
+// LIGHTWEIGHT PROJECT CRUD ROUTES (MongoDB Compass / Atlas)
+// Stores ONLY Name, Website, Description & Google Sheet URL
 // -------------------------------------------------------------
 
-// 1. Get all projects
+// 1. Get all projects (Public / Read-only for Client View)
 router.get('/projects', async (req, res) => {
   try {
     const projects = await Project.find().sort({ createdAt: -1 });
@@ -25,10 +26,10 @@ router.get('/projects', async (req, res) => {
   }
 });
 
-// 2. Create new project (stores Name, Website, Verticals & Sheet URL only)
-router.post('/projects', async (req, res) => {
+// 2. Create new project (Protected: SuperAdmin Only)
+router.post('/projects', verifyAdminToken, async (req, res) => {
   try {
-    const { name, website, categories, googleSheetUrl } = req.body;
+    const { name, website, description, googleSheetUrl, color } = req.body;
     
     if (!name || !name.trim()) {
       return res.status(400).json({ success: false, error: 'Project name is required' });
@@ -37,12 +38,13 @@ router.post('/projects', async (req, res) => {
     const project = new Project({
       name: name.trim(),
       website: (website || '').trim(),
-      categories: categories && categories.length > 0 ? categories : ['facebook', 'instagram', 'youtube', 'linkedin'],
-      googleSheetUrl: (googleSheetUrl || '').trim()
+      description: (description || '').trim(),
+      googleSheetUrl: (googleSheetUrl || '').trim(),
+      color: color || '#6366F1'
     });
 
     await project.save();
-    console.log(`✅ Saved project to MongoDB: "${project.name}" | URL: "${project.googleSheetUrl}"`);
+    console.log(`✅ Saved lightweight project to MongoDB: "${project.name}"`);
     res.status(201).json({ success: true, project });
   } catch (error) {
     console.error('Error creating project in MongoDB:', error);
@@ -50,20 +52,19 @@ router.post('/projects', async (req, res) => {
   }
 });
 
-// 3. Update existing project
-router.put('/projects/:id', async (req, res) => {
+// 3. Update existing project (Protected: SuperAdmin Only)
+router.put('/projects/:id', verifyAdminToken, async (req, res) => {
   try {
     const { id } = req.params;
-    const { name, website, categories, googleSheetUrl, lastSyncedAt, color, description } = req.body;
+    const { name, website, description, googleSheetUrl, lastSyncedAt, color } = req.body;
 
     const updates = {};
     if (name !== undefined) updates.name = name;
     if (website !== undefined) updates.website = website;
-    if (categories !== undefined) updates.categories = categories;
+    if (description !== undefined) updates.description = description;
     if (googleSheetUrl !== undefined) updates.googleSheetUrl = googleSheetUrl;
     if (lastSyncedAt !== undefined) updates.lastSyncedAt = lastSyncedAt;
     if (color !== undefined) updates.color = color;
-    if (description !== undefined) updates.description = description;
 
     const project = await Project.findByIdAndUpdate(id, updates, { new: true });
     if (!project) {
@@ -77,8 +78,8 @@ router.put('/projects/:id', async (req, res) => {
   }
 });
 
-// 4. Delete project
-router.delete('/projects/:id', async (req, res) => {
+// 4. Delete project (Protected: SuperAdmin Only)
+router.delete('/projects/:id', verifyAdminToken, async (req, res) => {
   try {
     const { id } = req.params;
     const project = await Project.findByIdAndDelete(id);
@@ -95,23 +96,23 @@ router.delete('/projects/:id', async (req, res) => {
 });
 
 // -------------------------------------------------------------
-// GOOGLE SHEET SYNC ROUTES
-// Parses the Google Sheet live on demand
+// LIVE ON-DEMAND GOOGLE SHEET SYNC ROUTES
+// Parses live data in-memory without bloating MongoDB
 // -------------------------------------------------------------
 
-// Direct sync for a project (updates lastSyncedAt & googleSheetUrl in DB, returns live parsed data)
-router.post('/projects/:id/sync', async (req, res) => {
+// Direct Sync for a project (Protected: SuperAdmin Only)
+router.post('/projects/:id/sync', verifyAdminToken, async (req, res) => {
   try {
     const { id } = req.params;
-    const { sheetUrl: overrideUrl, categories: reqCategories } = req.body;
+    const { sheetUrl: overrideUrl } = req.body;
 
     let project = null;
     try {
       if (id && !id.startsWith('proj-')) {
         project = await Project.findById(id);
       }
-    } catch (e) {
-      // Ignore cast error for local IDs
+    } catch {
+      // Ignore cast error for local fallback IDs
     }
 
     const sheetUrl = overrideUrl || project?.googleSheetUrl;
@@ -119,46 +120,48 @@ router.post('/projects/:id/sync', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Google Sheet URL is required' });
     }
 
-    const categories = reqCategories || (project?.categories && project.categories.length > 0
-      ? project.categories
-      : ['facebook', 'instagram', 'youtube', 'linkedin']);
-
-    const parsedData = await fetchAndParseGoogleSheet(sheetUrl, categories);
+    // Parse live on-demand
+    const syncResult = await fetchAndParseGoogleSheet(sheetUrl);
     const now = new Date().toLocaleString();
 
+    // Update metadata only in DB
     if (project) {
       project.googleSheetUrl = sheetUrl;
       project.lastSyncedAt = now;
-      await project.save().catch(err => console.warn('Could not save synced status to DB:', err.message));
+      await project.save();
     }
 
-    console.log(`🔄 Synced Google Sheet for project: "${project?.name || id}"`);
+    console.log(`🔄 Live parsed Google Sheet for "${project?.name || id}": ${syncResult.tabs.length} tabs (${syncResult.totalRows} rows) - Delivered in-memory`);
 
     res.json({
       success: true,
       project: project || { id, googleSheetUrl: sheetUrl, lastSyncedAt: now },
-      data: parsedData,
+      tabs: syncResult.tabs,
+      sheetData: syncResult.sheetData,
+      totalRows: syncResult.totalRows,
       syncedAt: now
     });
   } catch (error) {
-    console.error('Project sync error:', error);
+    console.error('Live sync error:', error);
     res.status(500).json({ success: false, error: error.message || 'Failed to sync Google Sheet' });
   }
 });
 
-// Generic Google Sheet Live Sync Endpoint
-router.post('/sync-sheet', async (req, res) => {
+// Generic Google Sheet Live Sync Endpoint (Protected: SuperAdmin Only)
+router.post('/sync-sheet', verifyAdminToken, async (req, res) => {
   try {
-    const { sheetUrl, categories = [] } = req.body;
+    const { sheetUrl } = req.body;
     if (!sheetUrl) {
       return res.status(400).json({ error: 'sheetUrl is required' });
     }
 
-    const data = await fetchAndParseGoogleSheet(sheetUrl, categories);
+    const syncResult = await fetchAndParseGoogleSheet(sheetUrl);
     res.json({
       success: true,
       syncedAt: new Date().toLocaleString(),
-      data
+      tabs: syncResult.tabs,
+      sheetData: syncResult.sheetData,
+      totalRows: syncResult.totalRows
     });
   } catch (error) {
     console.error('API /sync-sheet error:', error);
@@ -166,6 +169,56 @@ router.post('/sync-sheet', async (req, res) => {
       success: false,
       error: error.message || 'Failed to sync Google Sheet'
     });
+  }
+});
+
+// -------------------------------------------------------------
+// KPI VISIBILITY ROUTES
+// Stores per-tab admin-selected KPI metric keys (Omnichannel display preferences)
+// -------------------------------------------------------------
+
+// 5. Get KPI visibility map for a project (Public / Read-only for Client View)
+router.get('/projects/:id/kpi-visibility', async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!id || id.startsWith('proj-')) {
+      return res.json({ success: true, kpiVisibility: {} });
+    }
+    const project = await Project.findById(id).select('kpiVisibility');
+    if (!project) return res.status(404).json({ success: false, error: 'Project not found' });
+    res.json({ success: true, kpiVisibility: project.kpiVisibility || {} });
+  } catch (error) {
+    console.error('Error fetching kpiVisibility:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// 6. Update KPI visibility for a specific tab within a project (Protected: SuperAdmin Only)
+router.put('/projects/:id/kpi-visibility', verifyAdminToken, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { tabId, visibleKeys } = req.body;
+
+    if (!tabId) return res.status(400).json({ success: false, error: 'tabId is required' });
+    if (!Array.isArray(visibleKeys)) return res.status(400).json({ success: false, error: 'visibleKeys must be an array' });
+
+    if (!id || id.startsWith('proj-')) {
+      return res.json({ success: true, kpiVisibility: { [tabId]: visibleKeys } });
+    }
+
+    const project = await Project.findById(id);
+    if (!project) return res.status(404).json({ success: false, error: 'Project not found' });
+
+    if (!project.kpiVisibility) project.kpiVisibility = {};
+    project.kpiVisibility[tabId] = visibleKeys;
+    project.markModified('kpiVisibility'); // Required for Mixed type
+    await project.save();
+
+    console.log(`✅ Updated kpiVisibility for tab "${tabId}" in project "${project.name}"`);
+    res.json({ success: true, kpiVisibility: project.kpiVisibility });
+  } catch (error) {
+    console.error('Error updating kpiVisibility:', error);
+    res.status(500).json({ success: false, error: error.message });
   }
 });
 

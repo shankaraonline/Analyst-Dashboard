@@ -1,70 +1,97 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useMemo } from 'react';
 import { syncGoogleSheetUrl } from '../utils/googleSheetSync';
+import { cleanNumericValue, isPeriodOrMonthHeader } from '../utils/spreadsheetParser';
 
 const DashboardContext = createContext(null);
-const API_BASE_URL = 'http://localhost:5000/api';
-
-export const DEFAULT_CATEGORIES = [
-  { id: 'facebook', label: 'Facebook Page', icon: 'facebook' },
-  { id: 'instagram', label: 'Instagram Insights', icon: 'instagram' },
-  { id: 'youtube', label: 'YouTube Analytics', icon: 'youtube' },
-  { id: 'linkedin', label: 'LinkedIn B2B', icon: 'linkedin' }
-];
-
-export const AVAILABLE_VERTICAL_PRESETS = [
-  { id: 'facebook', label: 'Facebook Page & Ads', icon: 'facebook' },
-  { id: 'instagram', label: 'Instagram Insights', icon: 'instagram' },
-  { id: 'youtube', label: 'YouTube Analytics', icon: 'youtube' },
-  { id: 'linkedin', label: 'LinkedIn B2B', icon: 'linkedin' },
-  { id: 'whatsapp', label: 'WhatsApp Marketing', icon: 'whatsapp' },
-  { id: 'website_audits', label: 'Website Audits & Traffic', icon: 'website' }
-];
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || (import.meta.env.PROD ? '/api' : 'http://localhost:5000/api');
 
 export const DEFAULT_STARTER_PROJECT = {
-  name: 'Social Media Analytics',
+  name: 'Multi-Tab Performance Dashboard',
   website: 'https://example.com',
-  category: 'Digital Marketing',
-  color: '#6366F1',
-  description: 'Multi-channel social performance and live Google Sheet tracking.',
+  description: 'Multi-tab Google Sheet intelligence and live ledger tracking.',
   googleSheetUrl: '',
   lastSyncedAt: null,
-  categories: ['facebook', 'instagram', 'youtube', 'linkedin']
+  color: '#6366F1'
 };
 
 export function DashboardProvider({ children }) {
   const [projects, setProjects] = useState(() => {
     try {
-      const saved = localStorage.getItem('social_bi_projects_v9');
+      const saved = localStorage.getItem('social_bi_projects_v11');
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (parsed && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
       }
-    } catch (e) {}
+    } catch {
+      // ignore
+    }
     return [];
   });
 
   const [activeProjectId, setActiveProjectId] = useState(() => {
     try {
-      const saved = localStorage.getItem('social_bi_projects_v9');
+      const saved = localStorage.getItem('social_bi_projects_v11');
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (parsed && parsed.length > 0) return parsed[0].id || parsed[0]._id;
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed[0].id || parsed[0]._id;
       }
-    } catch (e) {}
+    } catch {
+      // ignore
+    }
     return null;
   });
 
-  const [currentView, setCurrentView] = useState('overview');
+  const [currentView, setCurrentView] = useState('overview'); // 'overview' | 'admin' | '<tab_id>'
   const [portalMode, setPortalMode] = useState('client'); // 'client' | 'admin'
-  const [activePlatformTab, setActivePlatformTab] = useState('facebook');
+  const [activePlatformTab, setActivePlatformTab] = useState(null);
   const [notification, setNotification] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
 
-  // In-memory / session parsed spreadsheet data with fast session cache
+  // Authentication State
+  const [adminToken, setAdminToken] = useState(() => {
+    try {
+      return localStorage.getItem('social_bi_admin_token') || null;
+    } catch {
+      return null;
+    }
+  });
+  const [adminUser, setAdminUser] = useState(() => {
+    try {
+      const u = localStorage.getItem('social_bi_admin_user');
+      return u ? JSON.parse(u) : null;
+    } catch {
+      return null;
+    }
+  });
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const isAdminAuthenticated = Boolean(adminToken);
+
+  // KPI Visibility preferences: { [tabId]: string[] } — admin-selected metric keys per tab
+  // Loaded from MongoDB on mount; localStorage used as fast-read cache to prevent flicker
+  const [omnichannelKpiVisibility, setOmnichannelKpiVisibility] = useState(() => {
+    try {
+      const cached = localStorage.getItem('social_bi_kpi_visibility_v1');
+      return cached ? JSON.parse(cached) : {};
+    } catch {
+      return {};
+    }
+  });
+
+  // In-memory / session parsed spreadsheet data cache (never saved to DB)
   const [sessionSpreadsheetMap, setSessionSpreadsheetMap] = useState(() => {
     try {
-      const saved = sessionStorage.getItem('social_bi_session_sheet_data');
+      const saved = sessionStorage.getItem('social_bi_session_sheet_data_v11');
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  });
+
+  // In-memory / session tabs metadata cache (never saved to DB)
+  const [sessionTabsMap, setSessionTabsMap] = useState(() => {
+    try {
+      const saved = sessionStorage.getItem('social_bi_session_tabs_map_v11');
       return saved ? JSON.parse(saved) : {};
     } catch {
       return {};
@@ -74,64 +101,157 @@ export function DashboardProvider({ children }) {
   useEffect(() => {
     try {
       if (Object.keys(sessionSpreadsheetMap).length > 0) {
-        sessionStorage.setItem('social_bi_session_sheet_data', JSON.stringify(sessionSpreadsheetMap));
+        sessionStorage.setItem('social_bi_session_sheet_data_v11', JSON.stringify(sessionSpreadsheetMap));
       }
-    } catch (e) {}
-  }, [sessionSpreadsheetMap]);
-
-  // Custom verticals list
-  const [customVerticals, setCustomVerticals] = useState(() => {
-    try {
-      const saved = localStorage.getItem('social_bi_custom_verticals');
-      return saved ? JSON.parse(saved) : [];
+      if (Object.keys(sessionTabsMap).length > 0) {
+        sessionStorage.setItem('social_bi_session_tabs_map_v11', JSON.stringify(sessionTabsMap));
+      }
     } catch {
-      return [];
+      // ignore
     }
-  });
-
-  useEffect(() => {
-    try {
-      localStorage.setItem('social_bi_custom_verticals', JSON.stringify(customVerticals));
-    } catch (e) {
-      console.warn('Could not save custom verticals to localStorage:', e);
-    }
-  }, [customVerticals]);
+  }, [sessionSpreadsheetMap, sessionTabsMap]);
 
   const showNotification = (message, type = 'success') => {
     setNotification({ message, type });
     setTimeout(() => setNotification(null), 3500);
   };
 
+  // Helper for Authorization Headers on mutating requests
+  const getAuthHeaders = (extraHeaders = {}) => {
+    const headers = { 'Content-Type': 'application/json', ...extraHeaders };
+    if (adminToken) {
+      headers['Authorization'] = `Bearer ${adminToken}`;
+    }
+    return headers;
+  };
+
+  // Admin Authentication Actions
+  const loginAdmin = async (username, password) => {
+    try {
+      const res = await fetch(`${API_BASE_URL}/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password })
+      });
+      const data = await res.json();
+      if (res.ok && data.success && data.token) {
+        setAdminToken(data.token);
+        setAdminUser(data.user);
+        try {
+          localStorage.setItem('social_bi_admin_token', data.token);
+          localStorage.setItem('social_bi_admin_user', JSON.stringify(data.user));
+        } catch {}
+        setPortalMode('admin');
+        setCurrentView('admin');
+        showNotification('Authenticated as SuperAdmin', 'success');
+        return { success: true };
+      } else {
+        return { success: false, error: data.error || 'Authentication failed' };
+      }
+    } catch (err) {
+      return { success: false, error: 'Could not connect to authentication server.' };
+    }
+  };
+
+  const logoutAdmin = () => {
+    setAdminToken(null);
+    setAdminUser(null);
+    try {
+      localStorage.removeItem('social_bi_admin_token');
+      localStorage.removeItem('social_bi_admin_user');
+    } catch {}
+    setPortalMode('client');
+    setCurrentView('overview');
+    showNotification('Logged out from Admin Portal', 'info');
+  };
+
+  const openLoginModal = () => setIsAuthModalOpen(true);
+  const closeLoginModal = () => setIsAuthModalOpen(false);
+
   // -------------------------------------------------------------
-  // Fast Background Sync from MongoDB (Non-blocking)
+  // Load Lightweight Projects from MongoDB
   // -------------------------------------------------------------
   useEffect(() => {
     async function loadProjects() {
+      let localSaved = [];
       try {
-        const res = await fetch(`${API_BASE_URL}/projects`, { signal: AbortSignal.timeout(3000) });
+        const raw = localStorage.getItem('social_bi_projects_v11');
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (Array.isArray(parsed)) localSaved = parsed;
+        }
+      } catch {
+        // ignore
+      }
+
+      try {
+        const res = await fetch(`${API_BASE_URL}/projects`, { signal: AbortSignal.timeout(5000) });
         if (res.ok) {
           const data = await res.json();
-          if (data.success && data.projects && data.projects.length > 0) {
-            setProjects(data.projects);
-            if (!activeProjectId) {
-              const firstId = data.projects[0].id || data.projects[0]._id;
-              setActiveProjectId(firstId);
+          if (data.success && Array.isArray(data.projects)) {
+            let dbProjects = data.projects;
+
+            // Auto-migrate any local offline metadata to MongoDB if authenticated
+            const localOnlyProjects = localSaved.filter(
+              lp => lp.id && lp.id.startsWith('proj-') && !dbProjects.some(dp => dp.name?.trim().toLowerCase() === lp.name?.trim().toLowerCase())
+            );
+
+            if (localOnlyProjects.length > 0 && adminToken) {
+              for (const lp of localOnlyProjects) {
+                try {
+                  const saveRes = await fetch(`${API_BASE_URL}/projects`, {
+                    method: 'POST',
+                    headers: getAuthHeaders(),
+                    body: JSON.stringify({
+                      name: lp.name,
+                      website: lp.website || '',
+                      description: lp.description || '',
+                      googleSheetUrl: lp.googleSheetUrl || '',
+                      color: lp.color || '#6366F1'
+                    })
+                  });
+                  if (saveRes.ok) {
+                    const savedData = await saveRes.json();
+                    if (savedData.success && savedData.project) {
+                      dbProjects = [savedData.project, ...dbProjects];
+                    }
+                  }
+                } catch (migrateErr) {
+                  console.warn('Could not auto-migrate project metadata to MongoDB:', migrateErr.message);
+                }
+              }
             }
-            return;
-          } else if (data.success && (!data.projects || data.projects.length === 0)) {
-            // Create starter project if database is completely empty
-            const createRes = await fetch(`${API_BASE_URL}/projects`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(DEFAULT_STARTER_PROJECT),
-              signal: AbortSignal.timeout(3000)
-            });
-            if (createRes.ok) {
-              const created = await createRes.json();
-              if (created.success && created.project) {
-                setProjects([created.project]);
-                setActiveProjectId(created.project.id || created.project._id);
-                return;
+
+            if (dbProjects.length > 0) {
+              setProjects(dbProjects);
+              const firstId = activeProjectId && dbProjects.some(p => (p.id || p._id) === activeProjectId)
+                ? activeProjectId
+                : (dbProjects[0].id || dbProjects[0]._id);
+              setActiveProjectId(firstId);
+
+              // Auto on-demand sync for active project if sheet URL is present and not yet in session cache
+              const currentProj = dbProjects.find(p => (p.id || p._id) === firstId);
+              if (currentProj?.googleSheetUrl && !sessionSpreadsheetMap[firstId]) {
+                syncProjectFromGoogleSheet(firstId, currentProj.googleSheetUrl, true);
+              }
+              return;
+            } else {
+              // Database completely empty, create initial project metadata if authenticated
+              if (adminToken) {
+                const createRes = await fetch(`${API_BASE_URL}/projects`, {
+                  method: 'POST',
+                  headers: getAuthHeaders(),
+                  body: JSON.stringify(DEFAULT_STARTER_PROJECT),
+                  signal: AbortSignal.timeout(5000)
+                });
+                if (createRes.ok) {
+                  const created = await createRes.json();
+                  if (created.success && created.project) {
+                    setProjects([created.project]);
+                    setActiveProjectId(created.project.id || created.project._id);
+                    return;
+                  }
+                }
               }
             }
           }
@@ -140,7 +260,6 @@ export function DashboardProvider({ children }) {
         console.warn('MongoDB sync in background, using local cache:', err.message);
       }
 
-      // If no projects exist in state or storage, create local starter fallback
       if (projects.length === 0) {
         const fallbackProject = { id: `proj-${Date.now()}`, ...DEFAULT_STARTER_PROJECT };
         setProjects([fallbackProject]);
@@ -151,88 +270,116 @@ export function DashboardProvider({ children }) {
     loadProjects();
   }, []);
 
-  // Save to localStorage as secondary backup
+  // Save lightweight projects to localStorage
   useEffect(() => {
     if (projects.length > 0) {
-      localStorage.setItem('social_bi_projects_v9', JSON.stringify(projects));
+      const lightweight = projects.map(p => ({
+        id: p.id || p._id,
+        name: p.name,
+        website: p.website || '',
+        description: p.description || '',
+        googleSheetUrl: p.googleSheetUrl || '',
+        lastSyncedAt: p.lastSyncedAt || null,
+        color: p.color || '#6366F1'
+      }));
+      localStorage.setItem('social_bi_projects_v11', JSON.stringify(lightweight));
     }
   }, [projects]);
 
-  const activeProject = projects.find(p => (p.id || p._id) === activeProjectId) || projects[0] || null;
-
-  // Active sheet data from in-memory session map
-  const activeProjectIdStr = activeProject ? (activeProject.id || activeProject._id) : null;
-  const sheetData = (activeProjectIdStr && sessionSpreadsheetMap[activeProjectIdStr]) || {
-    facebook: [],
-    instagram: [],
-    youtube: [],
-    linkedin: [],
-    whatsapp: [],
-    website_audits: []
-  };
-
-  // Switch to Client View
-  const viewClientDashboard = (projectId) => {
-    if (projectId) {
-      setActiveProjectId(projectId);
-      const proj = projects.find(p => (p.id || p._id) === projectId);
-      if (proj?.googleSheetUrl && !sessionSpreadsheetMap[projectId]) {
-        syncProjectFromGoogleSheet(projectId, proj.googleSheetUrl, true);
+  // Read URL query param to load specific workspace if shared: ?project=<id>
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const urlProjectId = params.get('project');
+      if (urlProjectId && projects.some(p => (p.id || p._id) === urlProjectId)) {
+        setActiveProjectId(urlProjectId);
       }
+    } catch {}
+  }, [projects]);
+
+  const activeProject = useMemo(() => {
+    return projects.find(p => (p.id || p._id) === activeProjectId) || projects[0] || null;
+  }, [projects, activeProjectId]);
+
+  const activeProjectIdStr = activeProject ? (activeProject.id || activeProject._id) : null;
+
+  // Active tabs
+  const activeTabs = useMemo(() => {
+    if (!activeProjectIdStr) return [];
+    return sessionTabsMap[activeProjectIdStr] || [];
+  }, [sessionTabsMap, activeProjectIdStr]);
+
+  // Active sheet data
+  const sheetData = useMemo(() => {
+    if (!activeProjectIdStr) return {};
+    return sessionSpreadsheetMap[activeProjectIdStr] || {};
+  }, [sessionSpreadsheetMap, activeProjectIdStr]);
+
+  useEffect(() => {
+    if (activeTabs.length > 0) {
+      if (!activePlatformTab || !activeTabs.some(t => t.id === activePlatformTab)) {
+        setActivePlatformTab(activeTabs[0].id);
+      }
+    } else {
+      setActivePlatformTab(null);
     }
+  }, [activeTabs]);
+
+  // Switch to Client Presentation Mode
+  const viewClientDashboard = () => {
     setPortalMode('client');
-    setCurrentView('overview');
+    if (currentView === 'admin') {
+      setCurrentView('overview');
+    }
     showNotification('Opened Client Presentation Dashboard');
   };
 
-  // Switch to Admin Portal
+  // Switch to Admin Portal (with Auth Check)
   const viewAdminPortal = () => {
-    setPortalMode('admin');
-    setCurrentView('admin');
-    showNotification('Switched to Admin Panel');
+    if (adminToken) {
+      setPortalMode('admin');
+      setCurrentView('admin');
+      showNotification('Switched to Admin Panel');
+    } else {
+      openLoginModal();
+    }
   };
 
-  // Update specific platform table data in memory
-  const updatePlatformData = (platform, newRows) => {
-    if (!activeProjectIdStr) return;
-    setSessionSpreadsheetMap(prev => ({
-      ...prev,
-      [activeProjectIdStr]: {
-        ...(prev[activeProjectIdStr] || {}),
-        [platform]: newRows
-      }
-    }));
-    showNotification(`Loaded ${newRows.length} rows into ${platform.toUpperCase()} session.`);
-  };
-
-  // 1-Click Sync project with its Google Sheet URL (Fetches live data & saves URL to MongoDB)
+  // Live On-Demand Sync
   const syncProjectFromGoogleSheet = async (projectId = activeProjectId, overrideUrl = null, silent = false) => {
     const proj = projects.find(p => (p.id || p._id) === projectId);
     const targetUrl = overrideUrl || proj?.googleSheetUrl;
 
     if (!targetUrl || !targetUrl.trim()) {
-      if (!silent) showNotification('Please add a Google Sheet URL first.', 'error');
+      if (!silent) showNotification('Please enter a Google Sheet URL first.', 'error');
       return false;
     }
 
     setIsSyncing(true);
     try {
-      // 1. Attempt fast server-side live sync (< 500ms)
+      // 1. Server-side live sync
       try {
         const res = await fetch(`${API_BASE_URL}/projects/${projectId}/sync`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ sheetUrl: targetUrl.trim(), categories: proj?.categories })
+          headers: getAuthHeaders(),
+          body: JSON.stringify({ sheetUrl: targetUrl.trim() })
         });
 
         if (res.ok) {
           const json = await res.json();
-          if (json.success && json.data) {
+          if (json.success && json.tabs && json.sheetData) {
             const pid = json.project?.id || json.project?._id || projectId;
+            
             setSessionSpreadsheetMap(prev => ({
               ...prev,
-              [pid]: json.data
+              [pid]: json.sheetData
             }));
+
+            setSessionTabsMap(prev => ({
+              ...prev,
+              [pid]: json.tabs
+            }));
+
             setProjects(prev => prev.map(p => {
               if ((p.id || p._id) !== pid) return p;
               return {
@@ -241,36 +388,33 @@ export function DashboardProvider({ children }) {
                 lastSyncedAt: json.syncedAt
               };
             }));
-            let rowCount = 0;
-            Object.keys(json.data || {}).forEach(k => {
-              rowCount += (json.data[k] || []).length;
-            });
-            if (!silent) showNotification(`Synced live with Google Sheet! (${rowCount} monthly rows)`, 'success');
+
+            if (json.tabs.length > 0 && (!activePlatformTab || !json.tabs.some(t => t.id === activePlatformTab))) {
+              setActivePlatformTab(json.tabs[0].id);
+            }
+
+            if (!silent) {
+              showNotification(`Live synced ${json.tabs.length} tabs (${json.totalRows} rows)!`, 'success');
+            }
             return true;
-          }
-        } else {
-          const errData = await res.json().catch(() => null);
-          if (errData && errData.error) {
-            if (!silent) showNotification(errData.error, 'error');
-            return false;
           }
         }
       } catch (serverErr) {
-        console.warn('Backend sync unavailable, falling back to client-side sync:', serverErr.message);
+        console.warn('Backend sync error, trying client-side sync:', serverErr.message);
       }
 
-      // 2. Client-side fallback fetch (only if backend server was unreachable)
-      const categories = proj?.categories || ['facebook', 'instagram', 'youtube', 'linkedin'];
-      const parsedData = await syncGoogleSheetUrl(targetUrl, categories);
+      // 2. Client-side fallback sync
+      const syncResult = await syncGoogleSheetUrl(targetUrl);
       const now = new Date().toLocaleString();
-      let totalRows = 0;
-      Object.keys(parsedData).forEach(k => {
-        totalRows += (parsedData[k] || []).length;
-      });
 
       setSessionSpreadsheetMap(prev => ({
         ...prev,
-        [projectId]: parsedData
+        [projectId]: syncResult.sheetData
+      }));
+
+      setSessionTabsMap(prev => ({
+        ...prev,
+        [projectId]: syncResult.tabs
       }));
 
       setProjects(prev => prev.map(p => {
@@ -283,97 +427,168 @@ export function DashboardProvider({ children }) {
         };
       }));
 
-      // Update URL and lastSyncedAt in MongoDB
-      await fetch(`${API_BASE_URL}/projects/${projectId}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          googleSheetUrl: targetUrl,
-          lastSyncedAt: now
-        })
-      }).catch(() => {});
+      if (adminToken) {
+        await fetch(`${API_BASE_URL}/projects/${projectId}`, {
+          method: 'PUT',
+          headers: getAuthHeaders(),
+          body: JSON.stringify({
+            googleSheetUrl: targetUrl,
+            lastSyncedAt: now
+          })
+        }).catch(() => {});
+      }
 
-      if (!silent) showNotification(`Synced live with Google Sheet! (${totalRows} monthly rows)`, 'success');
+      if (!silent) {
+        showNotification(`Live synced ${syncResult.tabs.length} tabs (${syncResult.totalRows} rows)!`, 'success');
+      }
       return true;
     } catch (err) {
       console.error('Google Sheet Sync Error:', err);
-      if (!silent) showNotification(err.message || 'Sync failed. Please check sheet sharing permissions.', 'error');
+      if (!silent) showNotification(err.message || 'Sync failed. Verify sheet link sharing.', 'error');
       return false;
     } finally {
       setIsSyncing(false);
     }
   };
 
-  // Update project settings (name, website, googleSheetUrl, categories) in MongoDB
+  // Update project metadata in MongoDB
   const updateProjectSettings = async (projectId, updates) => {
+    const cleanUpdates = {
+      name: updates.name,
+      website: updates.website,
+      description: updates.description,
+      googleSheetUrl: updates.googleSheetUrl,
+      lastSyncedAt: updates.lastSyncedAt,
+      color: updates.color
+    };
+
+    Object.keys(cleanUpdates).forEach(k => cleanUpdates[k] === undefined && delete cleanUpdates[k]);
+
     setProjects(prev => prev.map(p => {
       const pid = p.id || p._id;
       if (pid !== projectId) return p;
-      return {
-        ...p,
-        ...updates
-      };
+      return { ...p, ...cleanUpdates };
     }));
 
+    if (!adminToken) {
+      openLoginModal();
+      return;
+    }
+
     try {
-      await fetch(`${API_BASE_URL}/projects/${projectId}`, {
+      const res = await fetch(`${API_BASE_URL}/projects/${projectId}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updates)
+        headers: getAuthHeaders(),
+        body: JSON.stringify(cleanUpdates)
       });
+      if (res.status === 401) {
+        openLoginModal();
+        return;
+      }
       showNotification('Project settings saved to MongoDB.');
     } catch (err) {
       console.warn('Could not update project in MongoDB:', err);
     }
   };
 
-  // Clear session data
-  const clearProjectData = (platform = null) => {
+  // Add in-memory custom tab
+  const addCustomTab = (tabId, tabName, columns, rows) => {
     if (!activeProjectIdStr) return;
-    if (platform) {
-      setSessionSpreadsheetMap(prev => ({
-        ...prev,
-        [activeProjectIdStr]: {
-          ...(prev[activeProjectIdStr] || {}),
-          [platform]: []
-        }
-      }));
+
+    const cleanTabId = (tabId || tabName).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+    const finalName = tabName || cleanTabId.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+
+    const updatedSheetData = {
+      ...sheetData,
+      [cleanTabId]: rows
+    };
+
+    let updatedTabs = [...activeTabs];
+    const existingIdx = updatedTabs.findIndex(t => t.id === cleanTabId);
+    const newTabMeta = {
+      id: cleanTabId,
+      name: finalName,
+      columns: columns || [],
+      rowCount: rows.length
+    };
+
+    if (existingIdx !== -1) {
+      updatedTabs[existingIdx] = newTabMeta;
     } else {
-      setSessionSpreadsheetMap(prev => ({
-        ...prev,
-        [activeProjectIdStr]: {
-          facebook: [],
-          instagram: [],
-          youtube: [],
-          linkedin: [],
-          whatsapp: [],
-          website_audits: []
-        }
-      }));
+      updatedTabs.push(newTabMeta);
     }
-    showNotification(platform ? `Cleared ${platform.toUpperCase()} data.` : 'Cleared all channel data.');
+
+    setSessionSpreadsheetMap(prev => ({
+      ...prev,
+      [activeProjectIdStr]: updatedSheetData
+    }));
+
+    setSessionTabsMap(prev => ({
+      ...prev,
+      [activeProjectIdStr]: updatedTabs
+    }));
+
+    setActivePlatformTab(cleanTabId);
+    showNotification(`Added tab "${finalName}" to current session!`);
+    return cleanTabId;
   };
 
-  // Create a new client workspace in MongoDB (saves Name, Website, Verticals & Google Sheet URL)
+  // Delete tab from session
+  const deleteTab = (tabId) => {
+    if (!activeProjectIdStr) return;
+
+    const updatedTabs = activeTabs.filter(t => t.id !== tabId);
+    const updatedSheetData = { ...sheetData };
+    delete updatedSheetData[tabId];
+
+    setSessionSpreadsheetMap(prev => ({
+      ...prev,
+      [activeProjectIdStr]: updatedSheetData
+    }));
+
+    setSessionTabsMap(prev => ({
+      ...prev,
+      [activeProjectIdStr]: updatedTabs
+    }));
+
+    if (activePlatformTab === tabId) {
+      setActivePlatformTab(updatedTabs[0]?.id || null);
+    }
+    showNotification('Tab removed from session.');
+  };
+
+  // Create new project in MongoDB
   const createNewProject = async ({
     name,
     website = '',
-    categories = ['facebook', 'instagram', 'youtube', 'linkedin'],
-    googleSheetUrl = ''
+    description = '',
+    googleSheetUrl = '',
+    color = '#6366F1'
   }) => {
+    if (!adminToken) {
+      openLoginModal();
+      return null;
+    }
+
     const payload = {
       name: name.trim(),
       website: website.trim(),
-      categories: categories.length > 0 ? categories : ['facebook', 'instagram', 'youtube', 'linkedin'],
-      googleSheetUrl: (googleSheetUrl || '').trim()
+      description: description.trim(),
+      googleSheetUrl: (googleSheetUrl || '').trim(),
+      color
     };
 
     try {
       const res = await fetch(`${API_BASE_URL}/projects`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getAuthHeaders(),
         body: JSON.stringify(payload)
       });
+
+      if (res.status === 401) {
+        openLoginModal();
+        return null;
+      }
 
       if (res.ok) {
         const data = await res.json();
@@ -382,7 +597,6 @@ export function DashboardProvider({ children }) {
           setProjects(prev => [data.project, ...prev]);
           setActiveProjectId(newId);
 
-          // If Google Sheet URL was provided on creation, trigger live sync
           if (data.project.googleSheetUrl) {
             syncProjectFromGoogleSheet(newId, data.project.googleSheetUrl);
           }
@@ -395,7 +609,6 @@ export function DashboardProvider({ children }) {
       console.warn('MongoDB API create failed, creating locally:', err);
     }
 
-    // Fallback local creation
     const localProj = {
       id: `proj-${Date.now()}`,
       ...payload,
@@ -407,7 +620,13 @@ export function DashboardProvider({ children }) {
     return localProj;
   };
 
+  // Delete project from MongoDB
   const deleteProject = async (id) => {
+    if (!adminToken) {
+      openLoginModal();
+      return;
+    }
+
     if (projects.length <= 1) {
       showNotification('Cannot delete the last remaining project workspace.', 'warning');
       return;
@@ -419,127 +638,164 @@ export function DashboardProvider({ children }) {
     }
 
     try {
-      await fetch(`${API_BASE_URL}/projects/${id}`, {
-        method: 'DELETE'
+      const res = await fetch(`${API_BASE_URL}/projects/${id}`, {
+        method: 'DELETE',
+        headers: getAuthHeaders()
       });
+      if (res.status === 401) {
+        openLoginModal();
+        return;
+      }
       showNotification('Project deleted from MongoDB.');
     } catch (err) {
       console.warn('Could not delete project from MongoDB:', err);
     }
   };
 
-  // Computed summary metrics from live session sheetData
-  const computedMetrics = React.useMemo(() => {
-    const fb = sheetData.facebook || [];
-    const ig = sheetData.instagram || [];
-    const yt = sheetData.youtube || [];
-    const li = sheetData.linkedin || [];
-    const wa = sheetData.whatsapp || [];
-    const web = sheetData.website_audits || [];
+  // Computed aggregated metrics across all tabs
+  const computedOverview = useMemo(() => {
+    let totalRowsCount = 0;
+    let totalSpend = 0;
+    let totalVolume = 0;
+    let totalActions = 0;
+    let totalAudience = 0;
 
-    const totalFbReach = fb.reduce((sum, r) => sum + (Number(r.reach) || 0), 0);
-    const totalIgReach = ig.reduce((sum, r) => sum + (Number(r.reach) || 0), 0);
-    const totalYtViews = yt.reduce((sum, r) => sum + (Number(r.totalViews) || Number(r.views) || 0), 0);
-    const totalLiImpr = li.reduce((sum, r) => sum + (Number(r.impressions) || 0), 0);
+    activeTabs.forEach(tab => {
+      const rows = sheetData[tab.id] || [];
+      totalRowsCount += rows.length;
+      if (rows.length === 0) return;
 
-    const totalAdSpend = fb.reduce((sum, r) => sum + (Number(r.adSpend) || 0), 0);
+      const cols = tab.columns && tab.columns.length > 0 ? tab.columns : [];
+      const colKeys = cols.map(c => (typeof c === 'string' ? c : c.key));
 
-    // Latest followers
-    const latestFbFollowers = fb.length > 0 ? (Number(fb[fb.length - 1].totalPageFollowers) || Number(fb[fb.length - 1].totalFollowers) || 0) : 0;
-    const latestIgFollowers = ig.length > 0 ? (Number(ig[ig.length - 1].totalFollowers) || 0) : 0;
-    const latestYtSubs = yt.length > 0 ? (Number(yt[yt.length - 1].totalSubscribers) || 0) : 0;
-    const latestLiFollowers = li.length > 0 ? (Number(li[li.length - 1].totalFollowers) || 0) : 0;
+      const numericCols = colKeys.filter(k => {
+        if (!k || isPeriodOrMonthHeader(k)) return false;
+        const sampleValues = rows.slice(0, 10).map(r => r[k]).filter(v => v !== undefined && v !== null && String(v).trim() !== '');
+        if (sampleValues.length === 0) return false;
+        const validNumCount = sampleValues.filter(v => typeof v === 'number' || (typeof v === 'string' && /^-?[\d,.]+%?$/.test(v.trim()))).length;
+        return validNumCount >= sampleValues.length * 0.5;
+      });
 
-    const totalAudience = latestFbFollowers + latestIgFollowers + latestYtSubs + latestLiFollowers;
-    const combinedReachViews = totalFbReach + totalIgReach + totalYtViews + totalLiImpr;
+      const isWide = rows.length > 0 && isPeriodOrMonthHeader(Object.keys(rows[0])[0]) && numericCols.length > 5;
 
-    return {
-      totalAdSpend,
-      combinedReachViews,
-      totalAudience,
-      totalFbReach,
-      totalIgReach,
-      totalYtViews,
-      totalLiImpr,
-      latestFbFollowers,
-      latestIgFollowers,
-      latestYtSubs,
-      latestLiFollowers,
-      waCount: wa.length,
-      webCount: web.length
-    };
-  }, [sheetData]);
+      if (isWide) {
+        rows.forEach(row => {
+          const rowLabel = String(row[Object.keys(row)[0]] || '').toLowerCase();
+          let rowSum = 0;
+          numericCols.forEach(k => {
+            const raw = row[k];
+            if (raw !== undefined && raw !== null) {
+              rowSum += cleanNumericValue(raw);
+            }
+          });
 
-  // -------------------------------------------------------------
-  // Dynamic Verticals / Channels Management
-  // -------------------------------------------------------------
-  const allVerticals = React.useMemo(() => {
-    const map = new Map();
-    // 1. Base Presets
-    AVAILABLE_VERTICAL_PRESETS.forEach(p => map.set(p.id, p));
-    // 2. Custom Verticals created & saved
-    customVerticals.forEach(v => map.set(v.id, v));
-    // 3. Any category present in any project
-    projects.forEach(p => {
-      (p.categories || []).forEach(catId => {
-        if (!map.has(catId)) {
-          map.set(catId, {
-            id: catId,
-            label: catId.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
-            icon: 'custom',
-            isCustom: true
+          if (rowLabel.includes('spend') || rowLabel.includes('cost') || rowLabel.includes('budget') || rowLabel.includes('inr') || rowLabel.includes('amt') || rowLabel.includes('price')) {
+            totalSpend += rowSum;
+          } else if (rowLabel.includes('reach') || rowLabel.includes('view') || rowLabel.includes('impr') || rowLabel.includes('traffic') || rowLabel.includes('visit')) {
+            totalVolume += rowSum;
+          } else if (rowLabel.includes('action') || rowLabel.includes('lead') || rowLabel.includes('click') || rowLabel.includes('conv') || rowLabel.includes('order')) {
+            totalActions += rowSum;
+          } else if (rowLabel.includes('follow') || rowLabel.includes('sub') || rowLabel.includes('fan') || rowLabel.includes('aud')) {
+            totalAudience += rowSum;
+          }
+        });
+      } else {
+        const spendCols = numericCols.filter(k => {
+          const l = k.toLowerCase();
+          return l.includes('spend') || l.includes('cost') || l.includes('budget') || l.includes('inr') || l.includes('amt') || l.includes('price');
+        });
+        const volumeCols = numericCols.filter(k => {
+          const l = k.toLowerCase();
+          return l.includes('reach') || l.includes('view') || l.includes('impr') || l.includes('traffic') || l.includes('visit');
+        });
+        const actionCols = numericCols.filter(k => {
+          const l = k.toLowerCase();
+          return l.includes('action') || l.includes('lead') || l.includes('click') || l.includes('conv') || l.includes('order');
+        });
+        const audienceCols = numericCols.filter(k => {
+          const l = k.toLowerCase();
+          return l.includes('follow') || l.includes('sub') || l.includes('fan') || l.includes('aud');
+        });
+
+        rows.forEach(row => {
+          spendCols.forEach(k => {
+            if (row[k] !== undefined && row[k] !== null) totalSpend += cleanNumericValue(row[k]);
+          });
+          volumeCols.forEach(k => {
+            if (row[k] !== undefined && row[k] !== null) totalVolume += cleanNumericValue(row[k]);
+          });
+          actionCols.forEach(k => {
+            if (row[k] !== undefined && row[k] !== null) totalActions += cleanNumericValue(row[k]);
+          });
+          audienceCols.forEach(k => {
+            if (row[k] !== undefined && row[k] !== null) totalAudience += cleanNumericValue(row[k]);
+          });
+        });
+
+        if (spendCols.length === 0 && volumeCols.length === 0 && actionCols.length === 0 && audienceCols.length === 0 && numericCols.length > 0) {
+          const primaryCol = numericCols[0];
+          rows.forEach(row => {
+            if (row[primaryCol] !== undefined && row[primaryCol] !== null) {
+              const num = cleanNumericValue(row[primaryCol]);
+              totalAudience += num;
+            }
           });
         }
-      });
+      }
     });
-    return Array.from(map.values()).map(v => ({
-      ...v,
-      isCustom: !AVAILABLE_VERTICAL_PRESETS.some(p => p.id === v.id)
-    }));
-  }, [customVerticals, projects]);
 
-  const addCustomVertical = (rawName) => {
-    if (!rawName || !rawName.trim()) return null;
-    const name = rawName.trim();
-    const id = name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+    return {
+      totalTabs: activeTabs.length,
+      totalRowsCount,
+      totalSpend,
+      totalVolume,
+      totalActions,
+      totalAudience
+    };
+  }, [activeTabs, sheetData]);
 
-    const existsPreset = AVAILABLE_VERTICAL_PRESETS.some(p => p.id === id);
-    const existsCustom = customVerticals.some(p => p.id === id);
-
-    if (!existsPreset && !existsCustom) {
-      const newVertical = {
-        id,
-        label: name,
-        icon: 'custom',
-        isCustom: true
-      };
-      setCustomVerticals(prev => [...prev, newVertical]);
-    }
-
-    // Automatically enable it in the active project
-    if (activeProject) {
-      const currentCats = activeProject.categories || [];
-      if (!currentCats.includes(id)) {
-        const updated = [...currentCats, id];
-        updateProjectSettings(activeProject.id || activeProject._id, { categories: updated });
+  // Load KPI visibility from MongoDB
+  useEffect(() => {
+    if (!activeProjectIdStr) return;
+    async function loadKpiVisibility() {
+      try {
+        const res = await fetch(`${API_BASE_URL}/projects/${activeProjectIdStr}/kpi-visibility`, {
+          signal: AbortSignal.timeout(5000)
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success && data.kpiVisibility) {
+            setOmnichannelKpiVisibility(data.kpiVisibility);
+            try {
+              localStorage.setItem('social_bi_kpi_visibility_v1', JSON.stringify(data.kpiVisibility));
+            } catch {}
+          }
+        }
+      } catch (err) {
+        console.warn('Could not load KPI visibility from MongoDB, using cache:', err.message);
       }
     }
-    showNotification(`Added vertical "${name}" to All Verticals!`);
-    return id;
-  };
+    loadKpiVisibility();
+  }, [activeProjectIdStr]);
 
-  const deleteCustomVertical = (id) => {
-    setCustomVerticals(prev => prev.filter(v => v.id !== id));
-    // Remove from all projects
-    setProjects(prev => prev.map(p => {
-      if (p.categories && p.categories.includes(id)) {
-        const updatedCats = p.categories.filter(c => c !== id);
-        updateProjectSettings(p.id || p._id, { categories: updatedCats });
-        return { ...p, categories: updatedCats };
-      }
-      return p;
-    }));
-    showNotification('Removed custom vertical.');
+  // Set visibility for a specific tab and persist to MongoDB + localStorage
+  const setTabKpiVisibility = async (tabId, visibleKeys) => {
+    const updated = { ...omnichannelKpiVisibility, [tabId]: visibleKeys };
+    setOmnichannelKpiVisibility(updated);
+    try {
+      localStorage.setItem('social_bi_kpi_visibility_v1', JSON.stringify(updated));
+    } catch {}
+
+    if (!activeProjectIdStr || !adminToken) return;
+    try {
+      await fetch(`${API_BASE_URL}/projects/${activeProjectIdStr}/kpi-visibility`, {
+        method: 'PUT',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({ tabId, visibleKeys })
+      });
+    } catch (err) {
+      console.warn('Could not persist KPI visibility to MongoDB:', err.message);
+    }
   };
 
   return (
@@ -549,9 +805,12 @@ export function DashboardProvider({ children }) {
         activeProjectId,
         setActiveProjectId,
         activeProject,
+        activeTabs,
         sheetData,
-        updatePlatformData,
-        clearProjectData,
+        activePlatformTab,
+        setActivePlatformTab,
+        addCustomTab,
+        deleteTab,
         createNewProject,
         deleteProject,
         syncProjectFromGoogleSheet,
@@ -563,16 +822,21 @@ export function DashboardProvider({ children }) {
         viewAdminPortal,
         currentView,
         setCurrentView,
-        activePlatformTab,
-        setActivePlatformTab,
-        computedMetrics,
+        computedOverview,
+        omnichannelKpiVisibility,
+        setTabKpiVisibility,
         isLoading,
         notification,
         showNotification,
-        customVerticals,
-        allVerticals,
-        addCustomVertical,
-        deleteCustomVertical
+        // Authentication properties
+        adminToken,
+        adminUser,
+        isAdminAuthenticated,
+        isAuthModalOpen,
+        openLoginModal,
+        closeLoginModal,
+        loginAdmin,
+        logoutAdmin
       }}
     >
       {children}

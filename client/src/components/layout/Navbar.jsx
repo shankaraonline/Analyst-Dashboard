@@ -1,6 +1,6 @@
 import React from 'react';
 import { useDashboard } from '../../context/DashboardContext';
-import { FolderKanban, Eye, Building2, RefreshCw, CheckCircle2 } from 'lucide-react';
+import { FolderKanban, Eye, Building2, RefreshCw, Lock, ShieldCheck, LogOut } from 'lucide-react';
 
 export default function Navbar() {
   const {
@@ -11,7 +11,10 @@ export default function Navbar() {
     portalMode,
     viewClientDashboard,
     syncProjectFromGoogleSheet,
-    isSyncing
+    isSyncing,
+    isAdminAuthenticated,
+    openLoginModal,
+    logoutAdmin
   } = useDashboard();
 
   return (
@@ -26,53 +29,64 @@ export default function Navbar() {
         alignItems: 'center',
         justifyContent: 'space-between',
         padding: '0 32px',
-        position: 'sticky',
-        top: 0,
-        zIndex: 50,
-        backdropFilter: 'blur(12px)',
-        boxSizing: 'border-box',
-        transition: 'background-color 0.25s ease, border-color 0.25s ease'
+        boxSizing: 'border-box'
       }}
     >
-      {/* Left Section */}
+      {/* Left Section: Project Switcher or Active Title */}
       {portalMode === 'admin' ? (
-        /* Admin Mode: Project Selector */
-        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <FolderKanban size={19} color="#F59E0B" />
-            <span style={{ fontSize: '0.875rem', color: '#F59E0B', fontWeight: 700 }}>
-              Admin Workspace:
-            </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+          <div
+            style={{
+              width: '40px',
+              height: '40px',
+              borderRadius: '10px',
+              background: 'rgba(245, 158, 11, 0.15)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: '#F59E0B',
+              flexShrink: 0
+            }}
+          >
+            <FolderKanban size={20} />
           </div>
-
-          <div style={{ position: 'relative' }}>
-            <select
-              className="form-select"
-              value={activeProjectId || ''}
-              onChange={(e) => setActiveProjectId(e.target.value)}
-              style={{
-                paddingRight: '36px',
-                fontWeight: 700,
-                fontSize: '0.9rem',
-                minWidth: '290px',
-                padding: '9px 14px',
-                cursor: 'pointer',
-                background: 'var(--bg-card)',
-                borderColor: 'var(--border-color)',
-                borderRadius: '8px'
-              }}
-            >
-              {projects.map(p => (
-                <option key={p.id} value={p.id}>
-                  {p.name} {p.client ? `(${p.client})` : ''}
-                </option>
-              ))}
-            </select>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '2px' }}>
+              <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#F59E0B', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                Admin Portal
+              </span>
+              <span style={{ fontSize: '0.65rem', background: 'rgba(16, 185, 129, 0.15)', color: '#10B981', padding: '1px 6px', borderRadius: '8px', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '3px' }}>
+                <ShieldCheck size={10} /> SuperAdmin
+              </span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <select
+                value={activeProjectId || ''}
+                onChange={(e) => setActiveProjectId(e.target.value)}
+                style={{
+                  background: 'var(--bg-card)',
+                  border: '1px solid var(--border-color)',
+                  color: 'var(--text-primary)',
+                  padding: '6px 12px',
+                  borderRadius: '8px',
+                  fontWeight: 600,
+                  fontSize: '0.875rem',
+                  outline: 'none',
+                  cursor: 'pointer',
+                  minWidth: '220px'
+                }}
+              >
+                {projects.map(p => (
+                  <option key={p.id || p._id} value={p.id || p._id}>
+                    {p.name} {p.website ? `(${p.website})` : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
         </div>
       ) : (
-        /* Client Mode: Clean Client Branding */
-        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
           <div
             style={{
               width: '40px',
@@ -93,20 +107,20 @@ export default function Navbar() {
               {activeProject?.name}
             </div>
             <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <span>{activeProject?.client}</span>
+              <span>{activeProject?.website || 'Client Performance Overview'}</span>
               <span style={{ opacity: 0.5 }}>•</span>
-              <span>Performance Overview</span>
+              <span>Live Executive View</span>
             </div>
           </div>
         </div>
       )}
 
-      {/* Right Section: Sync Button & View Switcher */}
+      {/* Right Section: Sync Button & View Switcher / Auth Button */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-        {/* Quick Sync Button if project has Google Sheet URL */}
-        {activeProject?.googleSheetUrl && (
+        {/* Quick Sync Button if project has Google Sheet URL and user is Admin */}
+        {activeProject?.googleSheetUrl && isAdminAuthenticated && (
           <button
-            onClick={() => syncProjectFromGoogleSheet(activeProject.id)}
+            onClick={() => syncProjectFromGoogleSheet(activeProject.id || activeProject._id)}
             disabled={isSyncing}
             style={{
               display: 'flex',
@@ -129,20 +143,65 @@ export default function Navbar() {
           </button>
         )}
 
-        {portalMode === 'admin' && (
-          <button
-            className="btn btn-primary btn-sm"
-            onClick={() => viewClientDashboard()}
-            style={{
-              background: 'linear-gradient(135deg, #10B981 0%, #059669 100%)',
-              fontWeight: 700,
-              fontSize: '0.85rem',
-              padding: '8px 16px',
-              borderRadius: '8px'
-            }}
-          >
-            <Eye size={15} /> View Client Dashboard
-          </button>
+        {portalMode === 'admin' ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <button
+              className="btn btn-primary btn-sm"
+              onClick={() => viewClientDashboard()}
+              style={{
+                background: 'linear-gradient(135deg, #10B981 0%, #059669 100%)',
+                fontWeight: 700,
+                fontSize: '0.85rem',
+                padding: '8px 16px',
+                borderRadius: '8px'
+              }}
+            >
+              <Eye size={15} /> View Client Dashboard
+            </button>
+            <button
+              onClick={logoutAdmin}
+              title="Log out Admin"
+              style={{
+                background: 'rgba(239, 68, 68, 0.1)',
+                border: '1px solid rgba(239, 68, 68, 0.3)',
+                color: '#EF4444',
+                padding: '8px 12px',
+                borderRadius: '8px',
+                fontSize: '0.8125rem',
+                fontWeight: 600,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px'
+              }}
+            >
+              <LogOut size={14} />
+              <span>Logout</span>
+            </button>
+          </div>
+        ) : (
+          !isAdminAuthenticated && (
+            <button
+              onClick={openLoginModal}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                background: 'rgba(99, 102, 241, 0.1)',
+                border: '1px solid rgba(99, 102, 241, 0.3)',
+                color: '#6366F1',
+                borderRadius: '8px',
+                padding: '8px 14px',
+                fontSize: '0.8125rem',
+                fontWeight: 600,
+                cursor: 'pointer',
+                transition: 'all 0.15s ease'
+              }}
+            >
+              <Lock size={13} />
+              <span>Admin Login</span>
+            </button>
+          )
         )}
       </div>
     </header>

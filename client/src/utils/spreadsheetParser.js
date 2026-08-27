@@ -130,3 +130,16 @@ export function formatMetric(num, decimals = 1) {
   }
   return n.toLocaleString();
 }
+
+/**
+ * Robust detector for month/period/date column headers across all formats
+ */
+export function isPeriodOrMonthHeader(label) {
+  if (!label || typeof label !== 'string') return false;
+  const str = label.trim();
+  // Month names (Jan, January, Janurary, Feb, etc.)
+  const monthRegex = /\b(jan(?:u|ur|uar|uary)?|feb(?:r|ru|ruar|ruary)?|mar(?:c|ch)?|apr(?:i|il)?|may|jun(?:e)?|jul(?:y)?|aug(?:u|us|ust)?|sep(?:t|te|tem|tember)?|oct(?:o|ob|ober)?|nov(?:e|em|ember)?|dec(?:e|em|ember)?)\b/i;
+  // Year formats or date patterns (2024, 2025, 2026, Jan-26, 01/26, etc.)
+  const yearRegex = /\b20\d{2}\b|\b[a-zA-Z]{3,9}\s*[-/]?\s*\d{2,4}\b|\b\d{1,2}[-/]\d{2,4}\b|\b(?:2[0-9])\b/;
+  return monthRegex.test(str) || (yearRegex.test(str) && !/total|reach|view|spend|cost|follow|like|sub|click|action|visit|impression/i.test(str));
+}
