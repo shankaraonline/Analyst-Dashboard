@@ -16,7 +16,24 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-app.use(cors());
+// CORS — allow localhost (dev), Vercel domains, and production domain
+app.use(cors({
+  origin: (origin, callback) => {
+    // Allow requests with no origin (curl, Postman, same-origin)
+    if (!origin) return callback(null, true);
+    if (
+      origin.includes('localhost') ||
+      origin.includes('127.0.0.1') ||
+      origin.endsWith('.vercel.app') ||
+      origin.includes('shankaraonlinesolutions.com') ||
+      process.env.ALLOWED_ORIGIN === origin
+    ) {
+      return callback(null, true);
+    }
+    callback(new Error('Not allowed by CORS'));
+  },
+  credentials: true
+}));
 app.use(express.json({ limit: '25mb' }));
 app.use(express.urlencoded({ extended: true, limit: '25mb' }));
 
@@ -49,13 +66,26 @@ app.get('*', (req, res, next) => {
   });
 });
 
-// Start Server after connecting to MongoDB and seeding Admin user
-async function startServer() {
+// Initialize DB connection & seed admin (runs once on cold start)
+let initialized = false;
+async function initServer() {
+  if (initialized) return;
+  initialized = true;
   await connectDB();
   await seedAdminUser();
-  app.listen(PORT, () => {
-    console.log(`🚀 Dashboard Server running on port ${PORT}`);
-  });
 }
 
-startServer();
+// Local dev: start Express listener
+// Vercel: exports the app as a serverless handler
+if (process.env.VERCEL !== '1') {
+  initServer().then(() => {
+    app.listen(PORT, () => {
+      console.log(`🚀 Dashboard Server running on port ${PORT}`);
+    });
+  });
+} else {
+  // Trigger init on first serverless cold start
+  initServer();
+}
+
+export default app;
