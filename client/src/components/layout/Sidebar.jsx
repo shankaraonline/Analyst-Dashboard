@@ -241,8 +241,8 @@ export default function Sidebar() {
                     {activeProject.name}
                   </span>
                 </div>
-                <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
-                  {activeTabs.length} tabs • {activeProject.website || 'Direct'}
+                <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {activeProject.description || `${activeTabs.length} active tabs`}
                 </div>
               </div>
             )}

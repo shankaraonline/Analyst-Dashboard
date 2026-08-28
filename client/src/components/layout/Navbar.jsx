@@ -78,7 +78,7 @@ export default function Navbar() {
               >
                 {projects.map(p => (
                   <option key={p.id || p._id} value={p.id || p._id}>
-                    {p.name} {p.website ? `(${p.website})` : ''}
+                    {p.name} {p.description ? `(${p.description})` : ''}
                   </option>
                 ))}
               </select>
@@ -107,7 +107,7 @@ export default function Navbar() {
               {activeProject?.name}
             </div>
             <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <span>{activeProject?.website || 'Client Performance Overview'}</span>
+              <span>{activeProject?.description || 'Client Performance Overview'}</span>
               <span style={{ opacity: 0.5 }}>•</span>
               <span>Live Executive View</span>
             </div>

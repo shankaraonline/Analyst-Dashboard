@@ -26,6 +26,7 @@ export default function AdminUploadView() {
     deleteProject,
     activeProject,
     activeTabs,
+    sessionTabsMap,
     sheetData,
     viewClientDashboard,
     syncProjectFromGoogleSheet,
@@ -39,7 +40,7 @@ export default function AdminUploadView() {
 
   // Create Project State
   const [newProjName, setNewProjName] = useState('');
-  const [newProjWebsite, setNewProjWebsite] = useState('');
+  const [newProjDescription, setNewProjDescription] = useState('');
   const [newProjSheetUrl, setNewProjSheetUrl] = useState('');
 
   // Active Project Google Sheet URL edit state
@@ -70,12 +71,12 @@ export default function AdminUploadView() {
     e.preventDefault();
     if (!newProjName.trim()) return;
     createNewProject({
-      name: newProjName,
-      website: newProjWebsite || 'https://example.com',
+      name: newProjName.trim(),
+      description: newProjDescription.trim(),
       googleSheetUrl: newProjSheetUrl.trim()
     });
     setNewProjName('');
-    setNewProjWebsite('');
+    setNewProjDescription('');
     setNewProjSheetUrl('');
   };
 
@@ -508,55 +509,63 @@ export default function AdminUploadView() {
           </h3>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            {projects.map(p => (
-              <div
-                key={p.id || p._id}
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  padding: '12px 14px',
-                  background: activeProjectId === (p.id || p._id) ? 'rgba(99, 102, 241, 0.08)' : 'var(--bg-card-inner)',
-                  border: `1px solid ${activeProjectId === (p.id || p._id) ? '#6366F1' : 'var(--border-color)'}`,
-                  borderRadius: '10px'
-                }}
-              >
-                <div>
-                  <div style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: '0.875rem' }}>
-                    {p.name}
-                  </div>
-                  <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
-                    Website: {p.website || 'Direct'} • {p.tabs?.length || 0} tabs
-                  </div>
-                </div>
+            {projects.map(p => {
+              const pId = p.id || p._id;
+              const activeId = activeProject ? (activeProject.id || activeProject._id) : activeProjectId;
+              const pTabs = (sessionTabsMap && (sessionTabsMap[pId] || sessionTabsMap[p.id] || sessionTabsMap[p._id])) ||
+                (pId === activeId ? activeTabs : (p.tabs || []));
+              const tabCount = Array.isArray(pTabs) && pTabs.length > 0 ? pTabs.length : (p.tabCount || 0);
 
-                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                  <button
-                    className="btn btn-primary btn-sm"
-                    onClick={() => viewClientDashboard(p.id || p._id)}
-                    style={{ background: '#10B981', border: 'none', fontWeight: 600, fontSize: '0.75rem' }}
-                  >
-                    <Eye size={12} /> View
-                  </button>
+              return (
+                <div
+                  key={pId}
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    padding: '12px 14px',
+                    background: activeId === pId ? 'rgba(99, 102, 241, 0.08)' : 'var(--bg-card-inner)',
+                    border: `1px solid ${activeId === pId ? '#6366F1' : 'var(--border-color)'}`,
+                    borderRadius: '10px'
+                  }}
+                >
+                  <div>
+                    <div style={{ fontWeight: 700, color: 'var(--text-primary)', fontSize: '0.875rem' }}>
+                      {p.name}
+                    </div>
+                    <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                      {p.description || 'Omnichannel Analytics'} • {tabCount} {tabCount === 1 ? 'tab' : 'tabs'}
+                    </div>
+                  </div>
 
-                  {activeProjectId !== (p.id || p._id) && (
-                    <button className="btn btn-outline btn-sm" onClick={() => setActiveProjectId(p.id || p._id)} style={{ fontSize: '0.75rem' }}>
-                      Select
-                    </button>
-                  )}
-                  {projects.length > 1 && (
+                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                     <button
-                      className="btn btn-outline btn-sm"
-                      style={{ color: '#EF4444', fontSize: '0.75rem', padding: '6px 8px' }}
-                      onClick={() => deleteProject(p.id || p._id)}
-                      title="Delete Workspace"
+                      className="btn btn-primary btn-sm"
+                      onClick={() => viewClientDashboard(p.id || p._id)}
+                      style={{ background: '#10B981', border: 'none', fontWeight: 600, fontSize: '0.75rem' }}
                     >
-                      <Trash2 size={13} />
+                      <Eye size={12} /> View
                     </button>
-                  )}
+
+                    {activeProjectId !== (p.id || p._id) && (
+                      <button className="btn btn-outline btn-sm" onClick={() => setActiveProjectId(p.id || p._id)} style={{ fontSize: '0.75rem' }}>
+                        Select
+                      </button>
+                    )}
+                    {projects.length > 1 && (
+                      <button
+                        className="btn btn-outline btn-sm"
+                        style={{ color: '#EF4444', fontSize: '0.75rem', padding: '6px 8px' }}
+                        onClick={() => deleteProject(p.id || p._id)}
+                        title="Delete Workspace"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    )}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
 
@@ -583,14 +592,14 @@ export default function AdminUploadView() {
 
             <div>
               <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: '4px' }}>
-                Website
+                Description
               </label>
               <input
                 type="text"
                 className="form-input"
-                placeholder="e.g. artofliving.org"
-                value={newProjWebsite}
-                onChange={(e) => setNewProjWebsite(e.target.value)}
+                placeholder="e.g. Multi-Channel Performance Reporting & Campaign Intelligence"
+                value={newProjDescription}
+                onChange={(e) => setNewProjDescription(e.target.value)}
               />
             </div>
 

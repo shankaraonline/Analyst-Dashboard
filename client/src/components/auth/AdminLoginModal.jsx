@@ -4,7 +4,7 @@ import { ShieldCheck, Lock, User, Eye, EyeOff, X, AlertCircle } from 'lucide-rea
 
 export default function AdminLoginModal({ isOpen, onClose }) {
   const { loginAdmin } = useDashboard();
-  const [username, setUsername] = useState('ShankaraSuperAdmin');
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState(null);
@@ -21,6 +21,7 @@ export default function AdminLoginModal({ isOpen, onClose }) {
     setIsSubmitting(false);
 
     if (result.success) {
+      setUsername('');
       setPassword('');
       onClose();
     } else {
@@ -143,6 +144,7 @@ export default function AdminLoginModal({ isOpen, onClose }) {
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 required
+                autoFocus
                 style={{
                   width: '100%',
                   padding: '11px 12px 11px 38px',
@@ -154,7 +156,7 @@ export default function AdminLoginModal({ isOpen, onClose }) {
                   outline: 'none',
                   boxSizing: 'border-box'
                 }}
-                placeholder="ShankaraSuperAdmin"
+                placeholder="Enter admin username"
               />
             </div>
           </div>
@@ -173,7 +175,6 @@ export default function AdminLoginModal({ isOpen, onClose }) {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
-                autoFocus
                 style={{
                   width: '100%',
                   padding: '11px 40px 11px 38px',

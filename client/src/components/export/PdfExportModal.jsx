@@ -185,6 +185,7 @@ export default function PdfExportModal({ isOpen, onClose, tabYearFilters = {} })
   }, [activeTabs, sheetData, omnichannelKpiVisibility]);
 
   const [orientation, setOrientation] = useState('landscape'); // 'landscape' | 'portrait'
+  const [isGenerating, setIsGenerating] = useState(false);
 
   // Sections list with order and enabled state
   const [sections, setSections] = useState(() => {
@@ -334,12 +335,40 @@ export default function PdfExportModal({ isOpen, onClose, tabYearFilters = {} })
       <!DOCTYPE html>
       <html>
         <head>
-          <title>${activeProject?.name || 'Analytics'} - Performance Report</title>
+          <title> </title>
           <style>
             @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
             @page {
               size: A4 ${isLandscape ? 'landscape' : 'portrait'};
-              margin: 12mm;
+              margin: 8mm 8mm 10mm 8mm;
+            }
+            @media print {
+              html, body {
+                margin: 0 !important;
+                padding: 0 !important;
+                background: #ffffff !important;
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+              }
+              .page-break-section {
+                page-break-inside: auto !important;
+                break-inside: auto !important;
+                margin-bottom: 16px !important;
+              }
+              .section-header {
+                page-break-after: avoid !important;
+                break-after: avoid !important;
+              }
+              tr {
+                page-break-inside: avoid !important;
+                break-inside: avoid !important;
+              }
+              thead {
+                display: table-header-group !important;
+              }
+              tfoot {
+                display: table-footer-group !important;
+              }
             }
             body {
               font-family: 'Inter', system-ui, -apple-system, sans-serif;
@@ -365,9 +394,9 @@ export default function PdfExportModal({ isOpen, onClose, tabYearFilters = {} })
               display: table-footer-group;
             }
             .page-break-section {
-              page-break-inside: avoid;
-              break-inside: avoid;
-              margin-bottom: 24px;
+              page-break-inside: auto;
+              break-inside: auto;
+              margin-bottom: 16px;
             }
           </style>
         </head>
@@ -395,17 +424,42 @@ export default function PdfExportModal({ isOpen, onClose, tabYearFilters = {} })
     if (col.type === 'date' || col.type === 'text') return '-';
 
     const lowerLabel = col.label.toLowerCase();
-    if (
-      lowerLabel.includes('total follower') ||
-      lowerLabel.includes('total sub') ||
+
+    // Change/flow metrics that should be summed
+    const isChange = (
+      col.type === 'plusMetric' ||
+      lowerLabel.includes('new') ||
+      lowerLabel.includes('gain') ||
+      lowerLabel.includes('lost') ||
+      lowerLabel.includes('loss') ||
+      lowerLabel.includes('growth') ||
+      lowerLabel.includes('net') ||
+      lowerLabel.includes('added') ||
+      lowerLabel.includes('+')
+    );
+
+    // Stock/cumulative metrics (Followers, Page Followers, Subscribers, Balance, Fans, etc.) -> take latest value
+    const isStockMetric = !isChange && (
+      lowerLabel.includes('follower') ||
+      lowerLabel.includes('subscriber') ||
+      lowerLabel.includes('sub') ||
+      lowerLabel.includes('audience') ||
       lowerLabel.includes('balance') ||
-      lowerLabel.includes('total page like') ||
+      lowerLabel.includes('page like') ||
+      lowerLabel.includes('total like') ||
+      lowerLabel.includes('fan') ||
+      lowerLabel.includes('contact') ||
+      lowerLabel.includes('connection') ||
+      lowerLabel.includes('member') ||
       lowerLabel.includes('cumulative')
-    ) {
+    );
+
+    if (isStockMetric) {
       for (let i = rows.length - 1; i >= 0; i--) {
         const val = rows[i][col.key];
-        if (val !== null && val !== undefined && val !== '') {
-          return typeof val === 'number' ? val.toLocaleString() : String(val);
+        if (val !== null && val !== undefined && val !== '' && val !== '-') {
+          const num = typeof val === 'number' ? val : cleanNumericValue(val);
+          return !isNaN(num) ? num.toLocaleString() : String(val);
         }
       }
       return '-';
@@ -808,8 +862,7 @@ export default function PdfExportModal({ isOpen, onClose, tabYearFilters = {} })
                       </p>
                     )}
                     <div style={{ fontSize: '0.75rem', color: '#64748B', display: 'flex', gap: '20px' }}>
-                      <span>Website: <strong>{activeProject.website || 'Direct'}</strong></span>
-                      <span>Generated Date: <strong>{new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</strong></span>
+                      <span>Report Generated: <strong>{new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</strong></span>
                     </div>
                   </div>
                   <div style={{ textAlign: 'right' }}>
@@ -870,7 +923,7 @@ export default function PdfExportModal({ isOpen, onClose, tabYearFilters = {} })
                               <div
                                 style={{
                                   display: 'grid',
-                                  gridTemplateColumns: isLandscape ? 'repeat(5, 1fr)' : 'repeat(4, 1fr)',
+                                  gridTemplateColumns: 'repeat(4, 1fr)',
                                   gap: '8px'
                                 }}
                               >
@@ -955,6 +1008,8 @@ export default function PdfExportModal({ isOpen, onClose, tabYearFilters = {} })
 
                     // Tab / Ledger Table section
                     const { tab, columns, rows, isWide, getRowTotal } = getTabPdfData(section);
+                    const orientation = isLandscape ? 'landscape' : 'portrait';
+                    const tableFontSize = isWide ? (columns.length >= 8 ? (orientation === 'landscape' ? '0.66rem' : '0.58rem') : '0.68rem') : '0.7rem';
 
                     return (
                       <div key={section.id} style={{ marginTop: '12px' }}>
@@ -967,16 +1022,48 @@ export default function PdfExportModal({ isOpen, onClose, tabYearFilters = {} })
                           </div>
                         </div>
                         <div style={{ border: '1px solid #CBD5E1', borderRadius: '6px', overflow: 'hidden' }}>
-                          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.7rem', tableLayout: 'auto' }}>
+                          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: tableFontSize, tableLayout: 'auto' }}>
                             <thead>
                               <tr style={{ background: '#F1F5F9', borderBottom: '2px solid #94A3B8' }}>
-                                {columns.map((c, ci) => (
-                                  <th key={ci} style={{ padding: '7px 8px', textAlign: c.align || 'right', fontWeight: 800, color: '#0F172A', whiteSpace: 'nowrap', borderRight: ci < columns.length - 1 ? '1px solid #E2E8F0' : 'none' }}>
-                                    {c.label}
-                                  </th>
-                                ))}
+                                {columns.map((c, ci) => {
+                                  const isFirstCol = ci === 0;
+                                  const isDescCol = !isWide && (c.type === 'text' || c.label?.toLowerCase().includes('description') || c.label?.toLowerCase().includes('observation') || c.label?.toLowerCase().includes('insight'));
+                                  const thAlign = isFirstCol || isDescCol ? 'left' : 'right';
+                                  const thWhiteSpace = isDescCol ? 'normal' : 'nowrap';
+                                  const thMinWidth = isWide ? (isFirstCol ? (orientation === 'landscape' ? '140px' : '110px') : '42px') : (isDescCol ? '160px' : '60px');
+                                  const thPadding = isWide ? (orientation === 'landscape' ? '5px 6px' : '4px 3px') : '6px 8px';
+
+                                  return (
+                                    <th
+                                      key={ci}
+                                      style={{
+                                        padding: thPadding,
+                                        textAlign: thAlign,
+                                        fontWeight: 800,
+                                        color: '#0F172A',
+                                        whiteSpace: thWhiteSpace,
+                                        wordBreak: 'normal',
+                                        minWidth: thMinWidth,
+                                        borderRight: ci < columns.length - 1 ? '1px solid #E2E8F0' : 'none'
+                                      }}
+                                    >
+                                      {c.label}
+                                    </th>
+                                  );
+                                })}
                                 {isWide && (
-                                  <th style={{ padding: '7px 8px', textAlign: 'right', fontWeight: 800, color: '#6366F1', whiteSpace: 'nowrap', background: 'rgba(99,102,241,0.06)', borderLeft: '2px solid rgba(99,102,241,0.25)' }}>
+                                  <th
+                                    style={{
+                                      padding: isWide ? (orientation === 'landscape' ? '5px 6px' : '4px 4px') : '6px 8px',
+                                      textAlign: 'right',
+                                      fontWeight: 800,
+                                      color: '#6366F1',
+                                      whiteSpace: 'nowrap',
+                                      minWidth: '50px',
+                                      background: 'rgba(99,102,241,0.06)',
+                                      borderLeft: '2px solid rgba(99,102,241,0.25)'
+                                    }}
+                                  >
                                     Total
                                   </th>
                                 )}
@@ -984,7 +1071,15 @@ export default function PdfExportModal({ isOpen, onClose, tabYearFilters = {} })
                             </thead>
                             <tbody>
                               {rows.map((r, ri) => (
-                                <tr key={ri} style={{ borderBottom: '1px solid #E2E8F0', background: ri % 2 === 0 ? '#FFFFFF' : '#F8FAFC' }}>
+                                <tr
+                                  key={ri}
+                                  style={{
+                                    borderBottom: '1px solid #E2E8F0',
+                                    background: ri % 2 === 0 ? '#FFFFFF' : '#F8FAFC',
+                                    pageBreakInside: 'avoid',
+                                    breakInside: 'avoid'
+                                  }}
+                                >
                                   {columns.map((c, ci) => {
                                     const val = r[c.key];
                                     let displayVal = '-';
@@ -994,14 +1089,46 @@ export default function PdfExportModal({ isOpen, onClose, tabYearFilters = {} })
                                       else if (typeof val === 'number') displayVal = val.toLocaleString();
                                       else displayVal = String(val);
                                     }
+                                    const isFirstCol = ci === 0;
+                                    const isDescCol = !isWide && (c.type === 'text' || c.label?.toLowerCase().includes('description') || c.label?.toLowerCase().includes('observation') || c.label?.toLowerCase().includes('insight'));
+                                    const tdAlign = isFirstCol || isDescCol ? 'left' : 'right';
+                                    const tdWhiteSpace = (isWide && isFirstCol) || isDescCol ? 'normal' : 'nowrap';
+                                    const tdMinWidth = isWide ? (isFirstCol ? (orientation === 'landscape' ? '140px' : '110px') : '42px') : (isDescCol ? '160px' : '60px');
+                                    const tdPadding = isWide ? (orientation === 'landscape' ? '4px 6px' : '3px 4px') : '5px 8px';
+
                                     return (
-                                      <td key={ci} style={{ padding: '5px 8px', textAlign: c.align || 'right', fontWeight: ci === 0 ? 700 : 500, color: ci === 0 ? '#0284C7' : '#334155', whiteSpace: 'nowrap', borderRight: ci < columns.length - 1 ? '1px solid #F1F5F9' : 'none' }}>
+                                      <td
+                                        key={ci}
+                                        style={{
+                                          padding: tdPadding,
+                                          textAlign: tdAlign,
+                                          fontWeight: isFirstCol ? 700 : 500,
+                                          color: isFirstCol ? '#0284C7' : '#334155',
+                                          whiteSpace: tdWhiteSpace,
+                                          wordBreak: 'normal',
+                                          overflowWrap: 'break-word',
+                                          lineHeight: isFirstCol || isDescCol ? 1.25 : 'inherit',
+                                          minWidth: tdMinWidth,
+                                          borderRight: ci < columns.length - 1 ? '1px solid #F1F5F9' : 'none'
+                                        }}
+                                      >
                                         {displayVal}
                                       </td>
                                     );
                                   })}
                                   {isWide && (
-                                    <td style={{ padding: '5px 8px', textAlign: 'right', fontWeight: 800, color: '#6366F1', whiteSpace: 'nowrap', background: 'rgba(99,102,241,0.06)', borderLeft: '2px solid rgba(99,102,241,0.25)' }}>
+                                    <td
+                                      style={{
+                                        padding: isWide ? (orientation === 'landscape' ? '4px 6px' : '3px 4px') : '5px 8px',
+                                        textAlign: 'right',
+                                        fontWeight: 800,
+                                        color: '#6366F1',
+                                        whiteSpace: 'nowrap',
+                                        minWidth: '50px',
+                                        background: 'rgba(99,102,241,0.06)',
+                                        borderLeft: '2px solid rgba(99,102,241,0.25)'
+                                      }}
+                                    >
                                       {getRowTotal(r).toLocaleString()}
                                     </td>
                                   )}
@@ -1010,13 +1137,36 @@ export default function PdfExportModal({ isOpen, onClose, tabYearFilters = {} })
                             </tbody>
                             <tfoot>
                               <tr style={{ background: '#E2E8F0', borderTop: '2px solid #94A3B8', fontWeight: 800 }}>
-                                {columns.map((c, ci) => (
-                                  <td key={ci} style={{ padding: '7px 8px', textAlign: c.align || 'right', color: '#0F172A', whiteSpace: 'nowrap', borderRight: ci < columns.length - 1 ? '1px solid #CBD5E1' : 'none' }}>
-                                    {ci === 0 ? (isWide ? 'ROW TOTALS' : 'TOTAL / LATEST') : computeFooterTotal(rows, c, isWide)}
-                                  </td>
-                                ))}
+                                {columns.map((c, ci) => {
+                                  const isFirstCol = ci === 0;
+                                  const isDescCol = !isWide && (c.type === 'text' || c.label?.toLowerCase().includes('description') || c.label?.toLowerCase().includes('observation'));
+                                  return (
+                                    <td
+                                      key={ci}
+                                      style={{
+                                        padding: isWide ? '5px 4px' : '7px 8px',
+                                        textAlign: isFirstCol || isDescCol ? 'left' : 'right',
+                                        color: '#0F172A',
+                                        whiteSpace: isDescCol || isFirstCol ? 'normal' : 'nowrap',
+                                        borderRight: ci < columns.length - 1 ? '1px solid #CBD5E1' : 'none'
+                                      }}
+                                    >
+                                      {ci === 0 ? (isWide ? 'ROW TOTALS' : 'TOTAL / LATEST') : computeFooterTotal(rows, c, isWide)}
+                                    </td>
+                                  );
+                                })}
                                 {isWide && (
-                                  <td style={{ padding: '7px 8px', textAlign: 'right', color: '#64748B', fontWeight: 700, whiteSpace: 'nowrap', background: 'rgba(99,102,241,0.04)', borderLeft: '2px solid rgba(99,102,241,0.2)' }}>
+                                  <td
+                                    style={{
+                                      padding: isWide ? '5px 4px' : '7px 8px',
+                                      textAlign: 'right',
+                                      color: '#64748B',
+                                      fontWeight: 700,
+                                      whiteSpace: 'nowrap',
+                                      background: 'rgba(99,102,241,0.04)',
+                                      borderLeft: '2px solid rgba(99,102,241,0.2)'
+                                    }}
+                                  >
                                     —
                                   </td>
                                 )}
@@ -1145,8 +1295,7 @@ export default function PdfExportModal({ isOpen, onClose, tabYearFilters = {} })
                 </p>
               )}
               <div style={{ fontSize: '0.75rem', color: '#64748B', display: 'flex', gap: '20px' }}>
-                <span>Website: <strong>{activeProject.website || 'Direct'}</strong></span>
-                <span>Generated Date: <strong>{new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</strong></span>
+                <span>Report Generated: <strong>{new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</strong></span>
               </div>
             </div>
 
@@ -1201,7 +1350,7 @@ export default function PdfExportModal({ isOpen, onClose, tabYearFilters = {} })
                         <div
                           style={{
                             display: 'grid',
-                            gridTemplateColumns: isLandscape ? 'repeat(5, 1fr)' : 'repeat(4, 1fr)',
+                            gridTemplateColumns: 'repeat(4, 1fr)',
                             gap: '8px'
                           }}
                         >
@@ -1286,46 +1435,60 @@ export default function PdfExportModal({ isOpen, onClose, tabYearFilters = {} })
 
               // Tab Section
               const { tab, columns, rows, isWide, getRowTotal } = getTabPdfData(section);
+              const orientation = isLandscape ? 'landscape' : 'portrait';
+              const tableFontSize = isWide ? (columns.length >= 8 ? (orientation === 'landscape' ? '0.66rem' : '0.58rem') : '0.68rem') : '0.7rem';
 
               return (
-                <div key={section.id} className="page-break-section" style={{ pageBreakInside: 'avoid', breakInside: 'avoid', marginTop: '12px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', borderLeft: '4px solid #6366F1', paddingLeft: '10px' }}>
-                    <div style={{ fontSize: '1.05rem', fontWeight: 800, color: '#1E293B' }}>
+                <div key={section.id} className="page-break-section" style={{ marginTop: '12px' }}>
+                  <div className="section-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px', borderLeft: '4px solid #6366F1', paddingLeft: '8px' }}>
+                    <div style={{ fontSize: '1rem', fontWeight: 800, color: '#1E293B' }}>
                       {tab?.name || section.name}
                     </div>
-                    <div style={{ fontSize: '0.72rem', color: '#64748B' }}>
+                    <div style={{ fontSize: '0.68rem', color: '#64748B' }}>
                       {rows.length} total entries • {columns.length + (isWide ? 1 : 0)} columns
                     </div>
                   </div>
 
                   {/* Clean Formatted Spreadsheet Table for PDF */}
-                  <div style={{ border: '1px solid #CBD5E1', borderRadius: '6px', overflow: 'hidden' }}>
-                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.7rem', tableLayout: 'auto' }}>
+                  <div style={{ border: '1px solid #CBD5E1', borderRadius: '4px' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: tableFontSize, tableLayout: 'auto' }}>
                       <thead>
                         <tr style={{ background: '#F1F5F9', borderBottom: '2px solid #94A3B8' }}>
-                          {columns.map((c, ci) => (
-                            <th
-                              key={ci}
-                              style={{
-                                padding: '7px 8px',
-                                textAlign: c.align || 'right',
-                                fontWeight: 800,
-                                color: '#0F172A',
-                                whiteSpace: 'nowrap',
-                                borderRight: ci < columns.length - 1 ? '1px solid #E2E8F0' : 'none'
-                              }}
-                            >
-                              {c.label}
-                            </th>
-                          ))}
+                          {columns.map((c, ci) => {
+                            const isFirstCol = ci === 0;
+                            const isDescCol = !isWide && (c.type === 'text' || c.label?.toLowerCase().includes('description') || c.label?.toLowerCase().includes('observation') || c.label?.toLowerCase().includes('insight'));
+                            const thAlign = isFirstCol || isDescCol ? 'left' : 'right';
+                            const thWhiteSpace = isDescCol ? 'normal' : 'nowrap';
+                            const thMinWidth = isWide ? (isFirstCol ? (orientation === 'landscape' ? '140px' : '110px') : '42px') : (isDescCol ? '160px' : '60px');
+                            const thPadding = isWide ? (orientation === 'landscape' ? '5px 6px' : '4px 3px') : '6px 8px';
+
+                            return (
+                              <th
+                                key={ci}
+                                style={{
+                                  padding: thPadding,
+                                  textAlign: thAlign,
+                                  fontWeight: 800,
+                                  color: '#0F172A',
+                                  whiteSpace: thWhiteSpace,
+                                  wordBreak: 'normal',
+                                  minWidth: thMinWidth,
+                                  borderRight: ci < columns.length - 1 ? '1px solid #E2E8F0' : 'none'
+                                }}
+                              >
+                                {c.label}
+                              </th>
+                            );
+                          })}
                           {isWide && (
                             <th
                               style={{
-                                padding: '7px 8px',
+                                padding: isWide ? (orientation === 'landscape' ? '5px 6px' : '4px 4px') : '6px 8px',
                                 textAlign: 'right',
                                 fontWeight: 800,
                                 color: '#6366F1',
                                 whiteSpace: 'nowrap',
+                                minWidth: '50px',
                                 background: 'rgba(99,102,241,0.06)',
                                 borderLeft: '2px solid rgba(99,102,241,0.25)'
                               }}
@@ -1355,16 +1518,26 @@ export default function PdfExportModal({ isOpen, onClose, tabYearFilters = {} })
                                 else if (typeof val === 'number') displayVal = val.toLocaleString();
                                 else displayVal = String(val);
                               }
+                              const isFirstCol = ci === 0;
+                              const isDescCol = !isWide && (c.type === 'text' || c.label?.toLowerCase().includes('description') || c.label?.toLowerCase().includes('observation') || c.label?.toLowerCase().includes('insight'));
+                              const tdAlign = isFirstCol || isDescCol ? 'left' : 'right';
+                              const tdWhiteSpace = (isWide && isFirstCol) || isDescCol ? 'normal' : 'nowrap';
+                              const tdMinWidth = isWide ? (isFirstCol ? (orientation === 'landscape' ? '140px' : '110px') : '42px') : (isDescCol ? '160px' : '60px');
+                              const tdPadding = isWide ? (orientation === 'landscape' ? '4px 6px' : '3px 4px') : '5px 8px';
 
                               return (
                                 <td
                                   key={ci}
                                   style={{
-                                    padding: '5px 8px',
-                                    textAlign: c.align || 'right',
-                                    fontWeight: ci === 0 ? 700 : 500,
-                                    color: ci === 0 ? '#0284C7' : '#334155',
-                                    whiteSpace: 'nowrap',
+                                    padding: tdPadding,
+                                    textAlign: tdAlign,
+                                    fontWeight: isFirstCol ? 700 : 500,
+                                    color: isFirstCol ? '#0284C7' : '#334155',
+                                    whiteSpace: tdWhiteSpace,
+                                    wordBreak: 'normal',
+                                    overflowWrap: 'break-word',
+                                    lineHeight: isFirstCol || isDescCol ? 1.25 : 'inherit',
+                                    minWidth: tdMinWidth,
                                     borderRight: ci < columns.length - 1 ? '1px solid #F1F5F9' : 'none'
                                   }}
                                 >
@@ -1375,11 +1548,12 @@ export default function PdfExportModal({ isOpen, onClose, tabYearFilters = {} })
                             {isWide && (
                               <td
                                 style={{
-                                  padding: '5px 8px',
+                                  padding: isWide ? (orientation === 'landscape' ? '4px 6px' : '3px 4px') : '5px 8px',
                                   textAlign: 'right',
                                   fontWeight: 800,
                                   color: '#6366F1',
                                   whiteSpace: 'nowrap',
+                                  minWidth: '50px',
                                   background: 'rgba(99,102,241,0.06)',
                                   borderLeft: '2px solid rgba(99,102,241,0.25)'
                                 }}
@@ -1392,24 +1566,28 @@ export default function PdfExportModal({ isOpen, onClose, tabYearFilters = {} })
                       </tbody>
                       <tfoot>
                         <tr style={{ background: '#E2E8F0', borderTop: '2px solid #94A3B8', fontWeight: 800 }}>
-                          {columns.map((c, ci) => (
-                            <td
-                              key={ci}
-                              style={{
-                                padding: '7px 8px',
-                                textAlign: c.align || 'right',
-                                color: '#0F172A',
-                                whiteSpace: 'nowrap',
-                                borderRight: ci < columns.length - 1 ? '1px solid #CBD5E1' : 'none'
-                              }}
-                            >
-                              {ci === 0 ? (isWide ? 'ROW TOTALS' : 'TOTAL / LATEST') : computeFooterTotal(rows, c, isWide)}
-                            </td>
-                          ))}
+                          {columns.map((c, ci) => {
+                            const isFirstCol = ci === 0;
+                            const isDescCol = !isWide && (c.type === 'text' || c.label?.toLowerCase().includes('description') || c.label?.toLowerCase().includes('observation'));
+                            return (
+                              <td
+                                key={ci}
+                                style={{
+                                  padding: isWide ? '5px 4px' : '7px 8px',
+                                  textAlign: isFirstCol || isDescCol ? 'left' : 'right',
+                                  color: '#0F172A',
+                                  whiteSpace: isDescCol || isFirstCol ? 'normal' : 'nowrap',
+                                  borderRight: ci < columns.length - 1 ? '1px solid #CBD5E1' : 'none'
+                                }}
+                              >
+                                {ci === 0 ? (isWide ? 'ROW TOTALS' : 'TOTAL / LATEST') : computeFooterTotal(rows, c, isWide)}
+                              </td>
+                            );
+                          })}
                           {isWide && (
                             <td
                               style={{
-                                padding: '7px 8px',
+                                padding: isWide ? '5px 4px' : '7px 8px',
                                 textAlign: 'right',
                                 color: '#64748B',
                                 fontWeight: 700,
