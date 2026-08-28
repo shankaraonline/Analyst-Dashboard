@@ -16,7 +16,7 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// CORS — allow localhost (dev) and all Vercel domains (production)
+// CORS — allow localhost (dev), Vercel domains, and production domain
 app.use(cors({
   origin: (origin, callback) => {
     // Allow requests with no origin (curl, Postman, same-origin)
@@ -25,6 +25,7 @@ app.use(cors({
       origin.includes('localhost') ||
       origin.includes('127.0.0.1') ||
       origin.endsWith('.vercel.app') ||
+      origin.includes('shankaraonlinesolutions.com') ||
       process.env.ALLOWED_ORIGIN === origin
     ) {
       return callback(null, true);
