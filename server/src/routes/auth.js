@@ -1,6 +1,7 @@
 import express from 'express';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
+import mongoose from 'mongoose';
 import User from '../models/User.js';
 import { JWT_SECRET, verifyAdminToken } from '../middleware/auth.js';
 
@@ -20,12 +21,76 @@ router.post('/login', async (req, res) => {
       });
     }
 
-    // Lookup user in MongoDB (case-insensitive search)
+    const adminUsername = process.env.ADMIN_USERNAME || 'ShankaraSuperAdmin';
+    const adminPassword = process.env.ADMIN_PASSWORD || 'ShankaraSuperAdmin513';
+
+    // 1. If MongoDB is offline, verify directly against SuperAdmin credentials
+    if (mongoose.connection.readyState !== 1) {
+      if (
+        username.trim().toLowerCase() === adminUsername.toLowerCase() &&
+        password === adminPassword
+      ) {
+        const token = jwt.sign(
+          {
+            id: 'superadmin_offline_id',
+            username: adminUsername,
+            role: 'superadmin'
+          },
+          JWT_SECRET,
+          { expiresIn: '7d' }
+        );
+
+        return res.json({
+          success: true,
+          token,
+          user: {
+            id: 'superadmin_offline_id',
+            username: adminUsername,
+            role: 'superadmin'
+          },
+          message: 'Admin authenticated successfully.'
+        });
+      } else {
+        return res.status(401).json({
+          success: false,
+          error: 'Invalid username or password.'
+        });
+      }
+    }
+
+    // 2. Normal database lookup in MongoDB
     const user = await User.findOne({
       username: { $regex: new RegExp(`^${username.trim()}$`, 'i') }
     });
 
+    // Fallback check if user hasn't been seeded yet in DB
     if (!user) {
+      if (
+        username.trim().toLowerCase() === adminUsername.toLowerCase() &&
+        password === adminPassword
+      ) {
+        const token = jwt.sign(
+          {
+            id: 'superadmin_seed_id',
+            username: adminUsername,
+            role: 'superadmin'
+          },
+          JWT_SECRET,
+          { expiresIn: '7d' }
+        );
+
+        return res.json({
+          success: true,
+          token,
+          user: {
+            id: 'superadmin_seed_id',
+            username: adminUsername,
+            role: 'superadmin'
+          },
+          message: 'Admin authenticated successfully.'
+        });
+      }
+
       return res.status(401).json({
         success: false,
         error: 'Invalid username or password.'
@@ -43,7 +108,7 @@ router.post('/login', async (req, res) => {
 
     // Update last login timestamp
     user.lastLoginAt = new Date();
-    await user.save();
+    await user.save().catch(() => {});
 
     // Generate JWT token (valid for 7 days)
     const token = jwt.sign(

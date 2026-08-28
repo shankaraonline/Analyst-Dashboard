@@ -245,17 +245,41 @@ export default function UniversalSpreadsheetTable({
 
     const lowerLabel = col.label.toLowerCase();
 
-    if (
-      lowerLabel.includes('total follower') ||
-      lowerLabel.includes('total sub') ||
+    // Change/flow metrics that should be summed
+    const isChange = (
+      col.type === 'plusMetric' ||
+      lowerLabel.includes('new') ||
+      lowerLabel.includes('gain') ||
+      lowerLabel.includes('lost') ||
+      lowerLabel.includes('loss') ||
+      lowerLabel.includes('growth') ||
+      lowerLabel.includes('net') ||
+      lowerLabel.includes('added') ||
+      lowerLabel.includes('+')
+    );
+
+    // Stock/cumulative metrics (Followers, Page Followers, Subscribers, Balance, Fans, etc.) -> take latest value
+    const isStockMetric = !isChange && (
+      lowerLabel.includes('follower') ||
+      lowerLabel.includes('subscriber') ||
+      lowerLabel.includes('sub') ||
+      lowerLabel.includes('audience') ||
       lowerLabel.includes('balance') ||
-      lowerLabel.includes('total page like') ||
+      lowerLabel.includes('page like') ||
+      lowerLabel.includes('total like') ||
+      lowerLabel.includes('fan') ||
+      lowerLabel.includes('contact') ||
+      lowerLabel.includes('connection') ||
+      lowerLabel.includes('member') ||
       lowerLabel.includes('cumulative')
-    ) {
+    );
+
+    if (isStockMetric) {
       for (let i = sortedRows.length - 1; i >= 0; i--) {
         const val = sortedRows[i][col.key];
-        if (val !== null && val !== undefined && val !== '') {
-          return typeof val === 'number' ? val.toLocaleString() : String(val);
+        if (val !== null && val !== undefined && val !== '' && val !== '-') {
+          const num = typeof val === 'number' ? val : cleanNumericValue(val);
+          return !isNaN(num) ? num.toLocaleString() : String(val);
         }
       }
       return '-';
@@ -370,21 +394,24 @@ export default function UniversalSpreadsheetTable({
             <tr style={{ background: 'var(--bg-table-header)', borderBottom: '2px solid var(--border-color)' }}>
               {visibleColumns.map((col, idx) => {
                 const isSorted = sortConfig.key === col.key;
+                const isTextCol = col.type === 'text' || col.align === 'left' || col.label?.toLowerCase().includes('description') || col.label?.toLowerCase().includes('observation') || col.label?.toLowerCase().includes('insight');
+
                 return (
                   <th
                     key={col.key || idx}
                     onClick={() => handleSort(col.key)}
                     style={{
                       padding: '12px 14px',
-                      textAlign: col.align || 'right',
+                      textAlign: col.align || (isTextCol ? 'left' : 'right'),
                       fontWeight: 700,
                       color: col.highlight ? '#38BDF8' : 'var(--text-primary)',
-                      whiteSpace: 'nowrap',
+                      whiteSpace: isTextCol ? 'normal' : 'nowrap',
+                      wordBreak: isTextCol ? 'break-word' : 'normal',
                       cursor: 'pointer',
                       userSelect: 'none'
                     }}
                   >
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: col.align === 'left' ? 'flex-start' : 'flex-end', gap: '6px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: (col.align === 'left' || isTextCol) ? 'flex-start' : 'flex-end', gap: '6px' }}>
                       <span>{col.label}</span>
                       {isSorted ? (
                         sortConfig.direction === 'asc' ? <ArrowUp size={13} color="#6366F1" /> : <ArrowDown size={13} color="#6366F1" />
@@ -443,19 +470,30 @@ export default function UniversalSpreadsheetTable({
                     transition: 'background 0.15s ease'
                   }}
                 >
-                  {visibleColumns.map((col, cIdx) => (
-                    <td
-                      key={col.key || cIdx}
-                      style={{
-                        padding: '10px 14px',
-                        textAlign: col.align || 'right',
-                        fontWeight: col.highlight ? 700 : 500,
-                        whiteSpace: 'nowrap'
-                      }}
-                    >
-                      {renderCellValue(row, col)}
-                    </td>
-                  ))}
+                  {visibleColumns.map((col, cIdx) => {
+                    const rawVal = row[col.key];
+                    const isLongText = typeof rawVal === 'string' && (rawVal.length > 25 || (rawVal.includes(' ') && rawVal.length > 15));
+                    const isTextCol = col.type === 'text' || (!['currency', 'number', 'percent', 'date', 'duration', 'plusMetric', 'metric'].includes(col.type) && isLongText);
+
+                    return (
+                      <td
+                        key={col.key || cIdx}
+                        style={{
+                          padding: '10px 14px',
+                          textAlign: col.align || (isTextCol ? 'left' : 'right'),
+                          fontWeight: col.highlight ? 700 : (cIdx === 0 ? 600 : 500),
+                          whiteSpace: isTextCol ? 'normal' : 'nowrap',
+                          wordBreak: isTextCol ? 'break-word' : 'normal',
+                          overflowWrap: isTextCol ? 'break-word' : 'normal',
+                          lineHeight: isTextCol ? 1.45 : 'inherit',
+                          minWidth: isTextCol && isLongText ? '220px' : 'auto',
+                          maxWidth: isTextCol && isLongText ? '600px' : 'none'
+                        }}
+                      >
+                        {renderCellValue(row, col)}
+                      </td>
+                    );
+                  })}
                   {/* Wide format: row total cell */}
                   {isWideFormat && (
                     <td style={{
@@ -479,21 +517,24 @@ export default function UniversalSpreadsheetTable({
           {sortedRows.length > 0 && (
             <tfoot>
               <tr style={{ background: 'var(--bg-table-footer)', borderTop: '2px solid var(--border-color)', fontWeight: 800 }}>
-                {visibleColumns.map((col, cIdx) => (
-                  <td
-                    key={col.key || cIdx}
-                    style={{
-                      padding: '12px 14px',
-                      textAlign: col.align || 'right',
-                      color: cIdx === 0 ? 'var(--text-primary)' : (col.highlight ? '#38BDF8' : 'var(--text-primary)'),
-                      whiteSpace: 'nowrap'
-                    }}
-                  >
-                    {cIdx === 0
-                      ? (isWideFormat ? 'ROW TOTALS' : 'TOTAL / LATEST')
-                      : renderFooterTotal(col)}
-                  </td>
-                ))}
+                {visibleColumns.map((col, cIdx) => {
+                  const isTextCol = col.type === 'text' || col.align === 'left';
+                  return (
+                    <td
+                      key={col.key || cIdx}
+                      style={{
+                        padding: '12px 14px',
+                        textAlign: col.align || (isTextCol ? 'left' : 'right'),
+                        color: cIdx === 0 ? 'var(--text-primary)' : (col.highlight ? '#38BDF8' : 'var(--text-primary)'),
+                        whiteSpace: isTextCol || cIdx === 0 ? 'normal' : 'nowrap'
+                      }}
+                    >
+                      {cIdx === 0
+                        ? (isWideFormat ? 'ROW TOTALS' : 'TOTAL / LATEST')
+                        : renderFooterTotal(col)}
+                    </td>
+                  );
+                })}
                 {/* Wide format: Total column footer */}
                 {isWideFormat && (
                   <td style={{

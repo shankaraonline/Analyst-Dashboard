@@ -7,7 +7,6 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || (import.meta.env.PROD 
 
 export const DEFAULT_STARTER_PROJECT = {
   name: 'Multi-Tab Performance Dashboard',
-  website: 'https://example.com',
   description: 'Multi-tab Google Sheet intelligence and live ledger tracking.',
   googleSheetUrl: '',
   lastSyncedAt: null,
@@ -385,7 +384,9 @@ export function DashboardProvider({ children }) {
               return {
                 ...p,
                 googleSheetUrl: targetUrl,
-                lastSyncedAt: json.syncedAt
+                lastSyncedAt: json.syncedAt,
+                tabCount: json.tabs.length,
+                tabs: json.tabs
               };
             }));
 
@@ -423,7 +424,9 @@ export function DashboardProvider({ children }) {
         return {
           ...p,
           googleSheetUrl: targetUrl,
-          lastSyncedAt: now
+          lastSyncedAt: now,
+          tabCount: syncResult.tabs.length,
+          tabs: syncResult.tabs
         };
       }));
 
@@ -679,6 +682,9 @@ export function DashboardProvider({ children }) {
       const isWide = rows.length > 0 && isPeriodOrMonthHeader(Object.keys(rows[0])[0]) && numericCols.length > 5;
 
       if (isWide) {
+        const standingAudienceRows = [];
+        const changeAudienceRows = [];
+
         rows.forEach(row => {
           const rowLabel = String(row[Object.keys(row)[0]] || '').toLowerCase();
           let rowSum = 0;
@@ -696,9 +702,30 @@ export function DashboardProvider({ children }) {
           } else if (rowLabel.includes('action') || rowLabel.includes('lead') || rowLabel.includes('click') || rowLabel.includes('conv') || rowLabel.includes('order')) {
             totalActions += rowSum;
           } else if (rowLabel.includes('follow') || rowLabel.includes('sub') || rowLabel.includes('fan') || rowLabel.includes('aud')) {
-            totalAudience += rowSum;
+            const isChange = rowLabel.includes('new') || rowLabel.includes('gain') || rowLabel.includes('lost') || rowLabel.includes('growth') || rowLabel.includes('added') || rowLabel.includes('+');
+            if (isChange) {
+              changeAudienceRows.push(rowSum);
+            } else {
+              // Stock balance metric in wide format -> take latest non-empty month
+              for (let i = numericCols.length - 1; i >= 0; i--) {
+                const raw = row[numericCols[i]];
+                if (raw !== undefined && raw !== null && raw !== '' && raw !== '-') {
+                  const num = cleanNumericValue(raw);
+                  if (!isNaN(num) && num > 0) {
+                    standingAudienceRows.push(num);
+                    break;
+                  }
+                }
+              }
+            }
           }
         });
+
+        if (standingAudienceRows.length > 0) {
+          standingAudienceRows.forEach(num => { totalAudience += num; });
+        } else if (changeAudienceRows.length > 0) {
+          changeAudienceRows.forEach(num => { totalAudience += num; });
+        }
       } else {
         const spendCols = numericCols.filter(k => {
           const l = k.toLowerCase();
@@ -727,10 +754,37 @@ export function DashboardProvider({ children }) {
           actionCols.forEach(k => {
             if (row[k] !== undefined && row[k] !== null) totalActions += cleanNumericValue(row[k]);
           });
-          audienceCols.forEach(k => {
-            if (row[k] !== undefined && row[k] !== null) totalAudience += cleanNumericValue(row[k]);
-          });
         });
+
+        const standingAudienceCols = audienceCols.filter(k => {
+          const l = k.toLowerCase();
+          return !l.includes('new') && !l.includes('gain') && !l.includes('lost') && !l.includes('growth') && !l.includes('added') && !l.includes('+');
+        });
+        const changeAudienceCols = audienceCols.filter(k => {
+          const l = k.toLowerCase();
+          return l.includes('new') || l.includes('gain') || l.includes('lost') || l.includes('growth') || l.includes('added') || l.includes('+');
+        });
+
+        if (standingAudienceCols.length > 0) {
+          standingAudienceCols.forEach(k => {
+            for (let i = rows.length - 1; i >= 0; i--) {
+              const val = rows[i][k];
+              if (val !== undefined && val !== null && val !== '' && val !== '-') {
+                const num = cleanNumericValue(val);
+                if (!isNaN(num) && num > 0) {
+                  totalAudience += num;
+                  break;
+                }
+              }
+            }
+          });
+        } else if (changeAudienceCols.length > 0) {
+          changeAudienceCols.forEach(k => {
+            rows.forEach(row => {
+              if (row[k] !== undefined && row[k] !== null) totalAudience += cleanNumericValue(row[k]);
+            });
+          });
+        }
 
         if (spendCols.length === 0 && volumeCols.length === 0 && actionCols.length === 0 && audienceCols.length === 0 && numericCols.length > 0) {
           const primaryCol = numericCols[0];
@@ -806,6 +860,7 @@ export function DashboardProvider({ children }) {
         setActiveProjectId,
         activeProject,
         activeTabs,
+        sessionTabsMap,
         sheetData,
         activePlatformTab,
         setActivePlatformTab,

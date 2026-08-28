@@ -73,7 +73,7 @@ export default function OverviewView() {
     }).filter(card => isAdmin || card.visible);
   }, [overallKpiCards, omnichannelKpiVisibility, isAdmin]);
 
-  // ── Section 2: Per-tab KPI cards — the same auto-detected cards as each tab view ──
+  // ── Section 2: Per-tab KPI cards (computes all available metrics; visibility toggle controls what clients see) ──
   const allTabCardEntries = React.useMemo(() => {
     return activeTabs.map(tab => {
       const rawRows = sheetData[tab.id] || [];
@@ -120,7 +120,7 @@ export default function OverviewView() {
             {activeProject?.name || 'Project Dashboard'}
           </h2>
           <p style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', marginTop: '2px' }}>
-            Website: <strong>{activeProject?.website || 'Direct'}</strong> • {activeTabs.length} Discovered Tabs ({computedOverview?.totalRowsCount || 0} total rows)
+            {activeProject?.description ? activeProject.description : 'Omnichannel Performance Intelligence'} • {activeTabs.length} Discovered Tabs ({computedOverview?.totalRowsCount || 0} total rows)
           </p>
         </div>
         <button
@@ -245,11 +245,11 @@ export default function OverviewView() {
             )}
           </div>
 
-          {/* Cards grid: 5 columns in admin mode / auto-fit in client mode */}
+          {/* Cards grid: 4 columns across both Admin and Dashboard modes */}
           <div style={{
             display: 'grid',
-            gridTemplateColumns: isAdmin ? 'repeat(5, 1fr)' : 'repeat(auto-fit, minmax(220px, 1fr))',
-            gap: '14px',
+            gridTemplateColumns: 'repeat(4, 1fr)',
+            gap: isAdmin ? '10px' : '14px',
             alignItems: 'stretch'
           }}>
             {displayedChannelCardsList.map(({ tab, TabIcon, tColor, card, visible }) => {
@@ -267,10 +267,10 @@ export default function OverviewView() {
                   }}
                 >
                   {/* Channel label + optional eye toggle row */}
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px', minHeight: '22px', minWidth: 0 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px', overflow: 'hidden' }}>
-                      <TabIcon size={11} color={tColor} />
-                      <span style={{ fontSize: '0.62rem', fontWeight: 700, color: tColor, textTransform: 'uppercase', letterSpacing: '0.05em', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: isAdmin ? '4px' : '6px', minHeight: isAdmin ? '18px' : '22px', minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '3px', overflow: 'hidden' }}>
+                      <TabIcon size={isAdmin ? 10 : 11} color={tColor} />
+                      <span style={{ fontSize: isAdmin ? '0.58rem' : '0.62rem', fontWeight: 700, color: tColor, textTransform: 'uppercase', letterSpacing: '0.04em', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                         {tab.name}
                       </span>
                     </div>
@@ -291,19 +291,19 @@ export default function OverviewView() {
                           background: visible ? `${tColor}18` : 'rgba(100, 116, 139, 0.15)',
                           border: `1px solid ${visible ? `${tColor}40` : 'rgba(100, 116, 139, 0.3)'}`,
                           cursor: 'pointer',
-                          padding: '2px 5px',
+                          padding: '1px 4px',
                           color: visible ? tColor : 'var(--text-muted)',
-                          borderRadius: '5px',
+                          borderRadius: '4px',
                           flexShrink: 0,
                           display: 'flex',
                           alignItems: 'center',
-                          gap: '3px',
-                          fontSize: '0.65rem',
+                          gap: '2px',
+                          fontSize: '0.58rem',
                           fontWeight: 600,
                           transition: 'all 0.15s ease'
                         }}
                       >
-                        {visible ? <Eye size={12} /> : <EyeOff size={12} />}
+                        {visible ? <Eye size={10} /> : <EyeOff size={10} />}
                         <span>{visible ? 'Show' : 'Hide'}</span>
                       </button>
                     )}
@@ -320,6 +320,7 @@ export default function OverviewView() {
                       icon={card.icon}
                       iconBg={card.iconBg}
                       iconColor={card.iconColor}
+                      compact={isAdmin}
                     />
                   </div>
                 </div>
