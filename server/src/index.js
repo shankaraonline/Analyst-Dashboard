@@ -37,6 +37,23 @@ app.use(cors({
 app.use(express.json({ limit: '25mb' }));
 app.use(express.urlencoded({ extended: true, limit: '25mb' }));
 
+// Ensure DB is connected and seeded before handling any API requests (critical for Vercel serverless cold starts)
+let adminSeeded = false;
+app.use(async (req, res, next) => {
+  if (req.path.startsWith('/api')) {
+    try {
+      const conn = await connectDB();
+      if (conn && !adminSeeded) {
+        adminSeeded = true;
+        await seedAdminUser();
+      }
+    } catch (err) {
+      console.warn('DB initialization error in middleware:', err.message);
+    }
+  }
+  next();
+});
+
 // API Routes
 app.use('/api/auth', authRoutes);
 app.use('/api', apiRoutes);
@@ -66,26 +83,17 @@ app.get('*', (req, res, next) => {
   });
 });
 
-// Initialize DB connection & seed admin (runs once on cold start)
-let initialized = false;
-async function initServer() {
-  if (initialized) return;
-  initialized = true;
-  await connectDB();
-  await seedAdminUser();
-}
-
-// Local dev: start Express listener
-// Vercel: exports the app as a serverless handler
+// Initialize DB connection for local development
 if (process.env.VERCEL !== '1') {
-  initServer().then(() => {
+  connectDB().then(async (conn) => {
+    if (conn && !adminSeeded) {
+      adminSeeded = true;
+      await seedAdminUser();
+    }
     app.listen(PORT, () => {
       console.log(`🚀 Dashboard Server running on port ${PORT}`);
     });
   });
-} else {
-  // Trigger init on first serverless cold start
-  initServer();
 }
 
 export default app;

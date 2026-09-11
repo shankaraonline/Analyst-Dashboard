@@ -180,7 +180,7 @@ export function DashboardProvider({ children }) {
       }
 
       try {
-        const res = await fetch(`${API_BASE_URL}/projects`, { signal: AbortSignal.timeout(5000) });
+        const res = await fetch(`${API_BASE_URL}/projects`, { signal: AbortSignal.timeout(10000) });
         if (res.ok) {
           const data = await res.json();
           if (data.success && Array.isArray(data.projects)) {
