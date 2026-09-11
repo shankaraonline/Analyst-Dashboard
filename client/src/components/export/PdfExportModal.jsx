@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { useDashboard } from '../../context/DashboardContext';
-import { formatMetric, cleanNumericValue, isPeriodOrMonthHeader } from '../../utils/spreadsheetParser';
+import { formatMetric, cleanNumericValue, isPeriodOrMonthHeader, isTimeString, isWideSpreadsheet } from '../../utils/spreadsheetParser';
 import { computeTabKpiCards, computeManualTabKpiCards } from '../../utils/computeTabKpiCards';
 import { getTabIconComponent } from '../../views/UniversalTabView';
 import {
@@ -76,7 +76,7 @@ export default function PdfExportModal({ isOpen, onClose, tabYearFilters = {} })
             }))
           : []);
 
-    const isWide = baseCols.filter(c => isPeriodOrMonthHeader(c.label)).length >= 2;
+    const isWide = isWideSpreadsheet(baseCols, rawRows);
     const yearFilter = tabYearFilters[section.tabId];
 
     let columns = baseCols;
@@ -87,7 +87,7 @@ export default function PdfExportModal({ isOpen, onClose, tabYearFilters = {} })
       });
     }
 
-    const monthCols = isWide ? columns.filter(c => isPeriodOrMonthHeader(c.label)) : [];
+    const monthCols = isWide ? columns.filter(c => isPeriodOrMonthHeader(c.label) && !isTimeString(c.label)) : [];
 
     const isIncrementalRow = (row) => {
       const text = Object.values(row)
@@ -216,7 +216,7 @@ export default function PdfExportModal({ isOpen, onClose, tabYearFilters = {} })
         id: `tab_${t.id}`,
         type: 'tab',
         tabId: t.id,
-        name: `${t.name} Ledger Table`,
+        name: `${t.name} Data Table`,
         enabled: true,
         icon: FileSpreadsheet
       });
@@ -252,7 +252,7 @@ export default function PdfExportModal({ isOpen, onClose, tabYearFilters = {} })
             id: tid,
             type: 'tab',
             tabId: t.id,
-            name: `${t.name} Ledger Table`,
+            name: `${t.name} Data Table`,
             enabled: true,
             icon: FileSpreadsheet
           });

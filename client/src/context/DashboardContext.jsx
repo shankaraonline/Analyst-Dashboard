@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useMemo, useRef } from 'react';
 import { syncGoogleSheetUrl } from '../utils/googleSheetSync';
-import { cleanNumericValue, isPeriodOrMonthHeader } from '../utils/spreadsheetParser';
+import { cleanNumericValue, isPeriodOrMonthHeader, isPhoneOrIdString, isNonCalculableHeader, isTimeString, isDateString, isWideSpreadsheet } from '../utils/spreadsheetParser';
 import { computeChangeFromValues } from '../utils/computeTabKpiCards';
 
 const DashboardContext = createContext(null);
@@ -8,7 +8,7 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || (import.meta.env.PROD 
 
 export const DEFAULT_STARTER_PROJECT = {
   name: 'Multi-Tab Performance Dashboard',
-  description: 'Multi-tab Google Sheet intelligence and live ledger tracking.',
+  description: 'Multi-tab Google Sheet intelligence and live data tracking.',
   googleSheetUrl: '',
   lastSyncedAt: null,
   color: '#6366F1'
@@ -674,15 +674,16 @@ export function DashboardProvider({ children }) {
       const colKeys = cols.map(c => (typeof c === 'string' ? c : c.key));
 
       const numericCols = colKeys.filter(k => {
-        if (!k || isPeriodOrMonthHeader(k)) return false;
-        const sampleValues = rows.slice(0, 10).map(r => r[k]).filter(v => v !== undefined && v !== null && String(v).trim() !== '');
+        if (!k || isPeriodOrMonthHeader(k) || isTimeString(k) || isDateString(k)) return false;
+        if (isNonCalculableHeader(k)) return false;
+        const sampleValues = rows.slice(0, 15).map(r => r[k]).filter(v => v !== undefined && v !== null && String(v).trim() !== '' && String(v).trim() !== '-');
         if (sampleValues.length === 0) return false;
-        const validNumCount = sampleValues.filter(v => typeof v === 'number' || (typeof v === 'string' && /^-?[\d,.]+%?$/.test(v.trim()))).length;
+        if (sampleValues.some(v => isPhoneOrIdString(v) || isTimeString(v) || isDateString(v) || (typeof v === 'string' && v.includes('@')))) return false;
+        const validNumCount = sampleValues.filter(v => typeof v === 'number' || (typeof v === 'string' && /^[₹$€£]?\s*-?[\d,.]+%?[kmb]?$/i.test(v.trim()) && !isTimeString(v) && !isDateString(v))).length;
         return validNumCount >= sampleValues.length * 0.5;
       });
 
-      const firstRealKey = Object.keys(rows[0]).find(k => k !== '_rowId') || Object.keys(rows[0])[0];
-      const isWide = rows.length > 0 && isPeriodOrMonthHeader(firstRealKey) && numericCols.length > 5;
+      const isWide = isWideSpreadsheet(cols, rows);
 
       if (isWide) {
         const standingAudienceRows = [];

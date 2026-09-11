@@ -200,7 +200,7 @@ export default function AdminUploadView() {
                 </span>
               </div>
               <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: '3px 0 0 0' }}>
-                Paste your Google Sheet link. Every tab in your sheet will automatically become a distinct channel ledger in the sidebar.
+                Paste your Google Sheet link. Every tab in your sheet will automatically become a distinct channel sheet in the sidebar.
               </p>
             </div>
           </div>

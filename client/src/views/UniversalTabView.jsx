@@ -1,8 +1,9 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { useDashboard } from '../context/DashboardContext';
 import { computeTabKpiCards } from '../utils/computeTabKpiCards';
 import MetricCard from '../components/presentation/MetricCard';
 import UniversalSpreadsheetTable from '../components/presentation/UniversalSpreadsheetTable';
+import { isWideSpreadsheet, parseDateCell, isDateString } from '../utils/spreadsheetParser';
 import {
   FacebookIcon,
   InstagramIcon,
@@ -12,6 +13,8 @@ import {
   WebsiteIcon,
   CustomChannelIcon
 } from '../components/common/SocialIcons';
+
+import { inferColumnType } from '../utils/googleSheetSync';
 
 // Helper to choose the best icon for a tab based on its name
 export function getTabIconComponent(tabName = '') {
@@ -27,6 +30,13 @@ export function getTabIconComponent(tabName = '') {
 
 export default function UniversalTabView({ tabId }) {
   const { sheetData, activeProject, activeTabs } = useDashboard();
+  const [selectedYear, setSelectedYear] = useState('All');
+  const [selectedMonth, setSelectedMonth] = useState('All');
+
+  const handleYearChange = (y) => {
+    setSelectedYear(y);
+    setSelectedMonth('All');
+  };
 
   // Find tab metadata
   const currentTab = useMemo(() => {
@@ -50,18 +60,48 @@ export default function UniversalTabView({ tabId }) {
     // Fallback: extract keys from first row
     return Object.keys(rawRows[0])
       .filter(k => k !== '_rowId')
-      .map((k, idx) => ({
-        key: k,
-        label: k.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
-        type: idx === 0 ? 'date' : 'metric',
-        align: idx === 0 ? 'left' : 'right'
-      }));
+      .map((k, idx) => {
+        const sampleValues = rawRows.slice(0, 10).map(r => r[k]).filter(v => v != null && v !== '');
+        const inferred = inferColumnType(k, sampleValues);
+        return {
+          key: k,
+          label: k.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
+          type: inferred,
+          align: (inferred === 'text' || inferred === 'date' || inferred === 'time' || idx === 0) ? 'left' : 'right'
+        };
+      });
   }, [currentTab, rawRows]);
 
-  // Dynamically compute Top 4 KPI Cards from the tab using shared utility (always all 4 on channel tab view)
+  // Filter rows for KPI cards when year or month is selected on ledger/standard sheets
+  const filteredRows = useMemo(() => {
+    const isWide = isWideSpreadsheet(columns, rawRows);
+    if (isWide) return rawRows;
+
+    const dateCol = columns.find(c => c.type === 'date') ||
+      columns.find(c => isDateString(c.label) || c.label.toLowerCase().includes('date')) ||
+      columns[0] || null;
+
+    if (!dateCol) return rawRows;
+
+    return rawRows.filter(row => {
+      const parsed = parseDateCell(row[dateCol.key]);
+      if (!parsed) return true;
+
+      if (selectedYear !== 'All') {
+        const yStr = selectedYear.startsWith('20') ? selectedYear : `20${selectedYear}`;
+        if (parsed.year !== yStr && parsed.year !== selectedYear) return false;
+      }
+      if (selectedMonth !== 'All') {
+        if (parsed.month !== selectedMonth && String(parsed.monthNum) !== selectedMonth) return false;
+      }
+      return true;
+    });
+  }, [rawRows, columns, selectedYear, selectedMonth]);
+
+  // Dynamically compute Top 4 KPI Cards from the tab using shared utility (recalculates with filtered rows!)
   const kpiCards = useMemo(() => {
-    return computeTabKpiCards(rawRows, columns, themeColor);
-  }, [rawRows, columns, themeColor]);
+    return computeTabKpiCards(filteredRows, columns, themeColor);
+  }, [filteredRows, columns, themeColor]);
 
   // Date range subtitle
   const dateCol = columns.find(c => c.type === 'date');
@@ -105,7 +145,13 @@ export default function UniversalTabView({ tabId }) {
             {currentTab.name}
           </h2>
           <span style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)' }}>
-            {rawRows.length} Monthly Entries {dateRangeStr} • {activeProject?.name || 'Active Project'}
+            {selectedYear !== 'All' || selectedMonth !== 'All' ? (
+              <span style={{ color: '#6366F1', fontWeight: 600 }}>
+                {filteredRows.length} Filtered Entries ({selectedMonth !== 'All' ? `${selectedMonth} ` : ''}{selectedYear !== 'All' ? selectedYear : ''}) · of {rawRows.length} Total
+              </span>
+            ) : (
+              `${rawRows.length} Recorded Entries ${dateRangeStr}`
+            )} • {activeProject?.name || 'Active Project'}
           </span>
         </div>
       </div>
@@ -135,6 +181,10 @@ export default function UniversalTabView({ tabId }) {
         rows={rawRows}
         tabId={currentTab.id}
         tabName={currentTab.name}
+        selectedYear={selectedYear}
+        onYearChange={handleYearChange}
+        selectedMonth={selectedMonth}
+        onMonthChange={setSelectedMonth}
       />
     </div>
   );

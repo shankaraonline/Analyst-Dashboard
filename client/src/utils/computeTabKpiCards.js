@@ -8,8 +8,8 @@
  *
  * ALL change percentages are computed from real data — nothing is hardcoded.
  */
-import { formatMetric, cleanNumericValue, isPeriodOrMonthHeader } from './spreadsheetParser';
-import { Eye, Target, Users, IndianRupee, TrendingUp, Percent } from 'lucide-react';
+import { formatMetric, cleanNumericValue, isPeriodOrMonthHeader, isPhoneOrIdString, isNonCalculableHeader, isTimeString, isDateString, isWideSpreadsheet } from './spreadsheetParser.js';
+import { Eye, Target, Users, IndianRupee, TrendingUp, Percent, FileSpreadsheet } from 'lucide-react';
 
 function slugify(str) {
   return String(str).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
@@ -23,6 +23,125 @@ function formatMetricOrNumber(num) {
     return formatMetric(n);
   }
   return n.toLocaleString();
+}
+
+// ── Ledger / Tabular Summary Helper for sheets with 0 numeric metric columns ─
+
+function computeLedgerKpiCards(rawRows, columns, themeColor, maxCards = 4) {
+  const cards = [];
+
+  // 1. Total Logged Entries
+  cards.push({
+    key: 'total_entries',
+    title: 'Total Logged Entries',
+    value: rawRows.length.toLocaleString(),
+    subtitle: 'total records logged',
+    change: null,
+    isPositive: true,
+    icon: FileSpreadsheet,
+    iconBg: `${themeColor}22`,
+    iconColor: themeColor
+  });
+
+  // 2. Unique Contacts / Clients (detect email, phone, or name column by label or cell values)
+  const contactCol = columns.find(c => {
+    const l = c.label.toLowerCase();
+    if (l.includes('phone') || l.includes('mobile') || l.includes('contact') || l.includes('email') || l.includes('client') || l.includes('patient') || l.includes('customer') || l.includes('name')) return true;
+    const sample = rawRows.slice(0, 6).map(r => r[c.key]);
+    return sample.some(v => isPhoneOrIdString(v) || (typeof v === 'string' && v.includes('@')));
+  });
+  if (contactCol) {
+    const uniqueValues = new Set();
+    rawRows.forEach(r => {
+      const v = r[contactCol.key];
+      if (v !== undefined && v !== null && String(v).trim() !== '' && String(v).trim() !== '-') {
+        uniqueValues.add(String(v).trim());
+      }
+    });
+    if (uniqueValues.size > 0) {
+      cards.push({
+        key: 'unique_contacts',
+        title: 'Unique Clients / Contacts',
+        value: uniqueValues.size.toLocaleString(),
+        subtitle: `distinct recorded ${contactCol.label.toLowerCase().includes('@') ? 'email records' : (isPhoneOrIdString(contactCol.label) ? 'phone numbers' : contactCol.label.toLowerCase())}`,
+        change: null,
+        isPositive: true,
+        icon: Users,
+        iconBg: 'rgba(56, 189, 248, 0.15)',
+        iconColor: '#38BDF8'
+      });
+    }
+  }
+
+  // 3. Top Package / Service (by label or cell values)
+  const packageCol = columns.find(c => {
+    const l = c.label.toLowerCase();
+    if (l.includes('package') || l.includes('service') || l.includes('treatment') || l.includes('plan') || l.includes('course') || l.includes('query')) return true;
+    const sample = rawRows.slice(0, 6).map(r => r[c.key]);
+    return sample.some(v => typeof v === 'string' && /package|days|naturopathy|panchakarma|detox/i.test(v));
+  });
+  if (packageCol) {
+    const counts = {};
+    rawRows.forEach(r => {
+      const v = r[packageCol.key];
+      if (v !== undefined && v !== null && String(v).trim() !== '' && String(v).trim() !== '-') {
+        const valStr = String(v).trim();
+        counts[valStr] = (counts[valStr] || 0) + 1;
+      }
+    });
+    const sortedPackages = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+    if (sortedPackages.length > 0) {
+      const [topName, topCount] = sortedPackages[0];
+      const shortName = topName.length > 24 ? `${topName.slice(0, 22)}…` : topName;
+      cards.push({
+        key: 'top_package',
+        title: 'Top Requested Package',
+        value: shortName,
+        subtitle: `${topCount} enquiries logged (${((topCount / rawRows.length) * 100).toFixed(0)}%)`,
+        change: null,
+        isPositive: true,
+        icon: Target,
+        iconBg: 'rgba(16, 185, 129, 0.15)',
+        iconColor: '#10B981'
+      });
+    }
+  }
+
+  // 4. Primary Region / Country / Nationality
+  const regionCol = columns.find(c => {
+    if (c.key === contactCol?.key || c.key === packageCol?.key) return false;
+    const l = c.label.toLowerCase();
+    if (l.includes('country') || l.includes('nationality') || l.includes('region') || l.includes('location') || l.includes('city') || l.includes('state')) return true;
+    const sample = rawRows.slice(0, 6).map(r => r[c.key]);
+    return sample.some(v => typeof v === 'string' && /^(?:india|deutschland|germany|thailand|usa|uk|italy|mauritius|indian national|international)$/i.test(v.trim()));
+  });
+  if (regionCol) {
+    const counts = {};
+    rawRows.forEach(r => {
+      const v = r[regionCol.key];
+      if (v !== undefined && v !== null && String(v).trim() !== '' && String(v).trim() !== '-') {
+        const valStr = String(v).trim();
+        counts[valStr] = (counts[valStr] || 0) + 1;
+      }
+    });
+    const sortedRegions = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+    if (sortedRegions.length > 0) {
+      const [topRegion, topCount] = sortedRegions[0];
+      cards.push({
+        key: 'top_region',
+        title: 'Primary Region / Nationality',
+        value: topRegion,
+        subtitle: `${topCount} logged records (${((topCount / rawRows.length) * 100).toFixed(0)}%)`,
+        change: null,
+        isPositive: true,
+        icon: Eye,
+        iconBg: 'rgba(245, 158, 11, 0.15)',
+        iconColor: '#F59E0B'
+      });
+    }
+  }
+
+  return cards.slice(0, maxCards);
 }
 
 // ── Real Change Computation Helpers ─────────────────────────────────────────
@@ -56,7 +175,7 @@ function computeWideRowChange(row, monthCols) {
     const val = row[monthCols[i].key];
     if (val !== undefined && val !== null && String(val).trim() !== '' && String(val).trim() !== '-') {
       const num = cleanNumericValue(val);
-      if (!isNaN(num)) {
+      if (!isNaN(num) && num > 0) {
         if (latest === null) {
           latest = num;
         } else {
@@ -79,7 +198,7 @@ function computeStandardColChange(rawRows, colKey) {
     const val = rawRows[i]?.[colKey];
     if (val !== undefined && val !== null && String(val).trim() !== '' && String(val).trim() !== '-') {
       const num = cleanNumericValue(val);
-      if (!isNaN(num)) {
+      if (!isNaN(num) && num > 0) {
         if (latest === null) {
           latest = num;
         } else {
@@ -138,7 +257,7 @@ function getLatestNumericValue(rawRows, colKey) {
     const val = rawRows[i]?.[colKey];
     if (val !== undefined && val !== null && String(val).trim() !== '' && String(val).trim() !== '-') {
       const num = cleanNumericValue(val);
-      if (!isNaN(num)) return num;
+      if (!isNaN(num) && num > 0) return num;
     }
   }
   return 0;
@@ -160,17 +279,17 @@ function getLatestRowValue(row, monthCols) {
 export function computeTabKpiCards(rawRows, columns, themeColor, maxCards = 4) {
   if (!rawRows || rawRows.length === 0 || !columns || columns.length === 0) return [];
 
-  const isWide = columns.filter(c => isPeriodOrMonthHeader(c.label)).length >= 2;
+  const isWide = isWideSpreadsheet(columns, rawRows);
 
   // ── WIDE FORMAT: Rows = metric labels, Columns = months ──────────────────
   if (isWide) {
-    const monthCols = columns.filter(c => isPeriodOrMonthHeader(c.label));
+    const monthCols = columns.filter(c => isPeriodOrMonthHeader(c.label) && !isTimeString(c.label));
 
     const rowMetrics = rawRows.map(r => {
       const textParts = Object.keys(r)
         .filter(k => k !== '_rowId')
         .map(k => String(r[k] || ''))
-        .filter(v => isNaN(Number(v)) && v.length > 1 && !isPeriodOrMonthHeader(v));
+        .filter(v => isNaN(Number(v)) && v.length > 1 && !isPeriodOrMonthHeader(v) && !isTimeString(v) && !isDateString(v));
 
       const label = textParts[textParts.length - 1] || textParts[0] || 'Metric';
       const fullText = textParts.join(' ').toLowerCase();
@@ -179,7 +298,7 @@ export function computeTabKpiCards(rawRows, columns, themeColor, maxCards = 4) {
       // Compute real month-over-month change from actual data
       const changeData = computeWideRowChange(r, monthCols);
       return { label, fullText, total, latest, key: slugify(label), change: changeData.change, isPositive: changeData.isPositive };
-    }).filter(m => m.total > 0 || m.latest > 0);
+    }).filter(m => !isNonCalculableHeader(m.label) && !isPhoneOrIdString(m.label) && (m.total > 0 || m.latest > 0));
 
     const cards = [];
     const usedKeys = new Set();
@@ -255,8 +374,32 @@ export function computeTabKpiCards(rawRows, columns, themeColor, maxCards = 4) {
   }
 
   // ── STANDARD FORMAT: Columns = metrics, Rows = dates ─────────────────────
-  const numericCols = columns.filter(c => c.type !== 'date' && c.type !== 'text');
-  if (numericCols.length === 0) return [];
+  const numericCols = columns.filter(c => {
+    if (c.type === 'date' || c.type === 'time' || c.type === 'text') return false;
+    if (isNonCalculableHeader(c.label) || isNonCalculableHeader(c.key)) return false;
+    if (isTimeString(c.label) || isDateString(c.label)) return false;
+
+    // Check sample values in this column: must NOT contain dates, times, phones, or emails
+    const sampleValues = rawRows.slice(0, 15).map(r => r[c.key]).filter(v => v !== undefined && v !== null && String(v).trim() !== '' && String(v).trim() !== '-');
+    if (sampleValues.length === 0) return false;
+    if (sampleValues.some(v => isPhoneOrIdString(v) || isTimeString(v) || isDateString(v) || (typeof v === 'string' && v.includes('@')))) {
+      return false;
+    }
+
+    // Column values must be predominantly valid numeric representations
+    const validNums = sampleValues.filter(v => {
+      if (typeof v === 'number') return !isNaN(v);
+      const s = String(v).trim();
+      return /^[₹$€£]?\s*-?[\d,.]+%?[kmb]?$/i.test(s) && !isTimeString(s) && !isDateString(s);
+    });
+    return validNums.length >= sampleValues.length * 0.5;
+  });
+
+  // If no calculable numeric metric columns exist (e.g. Sheet10 enquiry/patient ledger),
+  // return clean, meaningful Ledger Summary KPI cards instead of bogus totals.
+  if (numericCols.length === 0) {
+    return computeLedgerKpiCards(rawRows, columns, themeColor, maxCards);
+  }
 
   const cards = [];
   const usedKeys = new Set();
@@ -433,10 +576,10 @@ export function computeManualTabKpiCards(rawRows, columns, themeColor = '#6366F1
   // Strict manual selection: If no rows are explicitly selected by the user, generate NO cards.
   if (!selectedRowKeys || !Array.isArray(selectedRowKeys) || selectedRowKeys.length === 0) return [];
 
-  const isWide = columns.filter(c => isPeriodOrMonthHeader(c.label)).length >= 2;
+  const isWide = isWideSpreadsheet(columns, rawRows);
 
   if (isWide) {
-    const allMonthCols = columns.filter(c => isPeriodOrMonthHeader(c.label));
+    const allMonthCols = columns.filter(c => isPeriodOrMonthHeader(c.label) && !isTimeString(c.label));
     const activeCols = (selectedColKeys && selectedColKeys.length > 0)
       ? allMonthCols.filter(c => selectedColKeys.includes(c.key))
       : allMonthCols;

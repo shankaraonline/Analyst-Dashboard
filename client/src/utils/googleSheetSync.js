@@ -1,5 +1,6 @@
 import * as XLSX from 'xlsx';
 import Papa from 'papaparse';
+import { isPhoneOrIdString, isNonCalculableHeader } from './spreadsheetParser';
 
 /**
  * Extracts Google Spreadsheet ID from any URL format
@@ -25,6 +26,12 @@ export function cleanValue(val) {
   if (val === null || val === undefined || val === '' || val === 'NA' || val === 'na' || val === 'N/A' || val === 'n/a' || val === '-') {
     return null;
   }
+
+  // Preserve phone numbers, mobile numbers, and serial IDs as formatted raw strings
+  if (isPhoneOrIdString(val)) {
+    return String(val).trim();
+  }
+
   if (typeof val === 'number') {
     return isNaN(val) ? null : val;
   }
@@ -65,9 +72,101 @@ export function cleanValue(val) {
   return str;
 }
 
+function isLikelyDataRow(row = []) {
+  if (!row || row.length === 0) return false;
+  return row.some(cell => {
+    if (cell === null || cell === undefined) return false;
+    const str = String(cell).trim();
+    if (!str) return false;
+    if (str.includes('@') && str.includes('.')) return true;
+    if (/^\d{1,2}:\d{2}(?::\d{2})?(?:\s*[ap]m)?$/i.test(str)) return true;
+    if (/^\d(?:\.\d+)?[eE]\+?\d{2}$/i.test(str)) return true;
+    const digits = str.replace(/[^0-9]/g, '');
+    if (digits.length >= 10 && digits.length <= 13 && !str.includes('%')) return true;
+    if (/\b(?:[12]\d|3[01]|0?[1-9])\s*(?:st|nd|rd|th)?\s*,\s*\d{4}/i.test(str)) return true;
+    return false;
+  });
+}
+
+function inferHeaderLabelFromValues(samples = [], colIdx = 0) {
+  const nonEmpty = samples.filter(v => v !== null && v !== undefined && String(v).trim() !== '');
+  if (nonEmpty.length === 0) return `Column ${colIdx + 1}`;
+
+  const timeMatches = nonEmpty.filter(v => /^\d{1,2}:\d{2}(?::\d{2})?(?:\s*[ap]m)?$/i.test(String(v).trim())).length;
+  if (timeMatches / nonEmpty.length > 0.4) return 'Time';
+
+  const dateMatches = nonEmpty.filter(v => {
+    const s = String(v).trim();
+    return /^\d{4}[-/]\d{1,2}[-/]\d{1,2}/.test(s) || /^\d{1,2}[-/]\d{1,2}[-/]\d{2,4}/.test(s) || /\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\b/i.test(s);
+  }).length;
+  if (dateMatches / nonEmpty.length > 0.4) return 'Date';
+
+  const emailMatches = nonEmpty.filter(v => String(v).includes('@') && String(v).includes('.')).length;
+  if (emailMatches / nonEmpty.length > 0.4) return 'Email';
+
+  const phoneMatches = nonEmpty.filter(v => {
+    const s = String(v).trim();
+    if (/^\d(?:\.\d+)?[eE]\+?\d{2}$/i.test(s)) return true;
+    const d = s.replace(/[^0-9]/g, '');
+    return d.length >= 10 && d.length <= 13;
+  }).length;
+  if (phoneMatches / nonEmpty.length > 0.4) return 'Phone / Contact';
+
+  const packageMatches = nonEmpty.filter(v => {
+    const l = String(v).toLowerCase();
+    return l.includes('package') || l.includes('days') || l.includes('treatment') || l.includes('detox');
+  }).length;
+  if (packageMatches / nonEmpty.length > 0.4) return 'Package / Service';
+
+  const nationalityMatches = nonEmpty.filter(v => {
+    const l = String(v).toLowerCase();
+    return l.includes('national') || l.includes('international') || l.includes('nri');
+  }).length;
+  if (nationalityMatches / nonEmpty.length > 0.4) return 'Nationality';
+
+  const countryMatches = nonEmpty.filter(v => {
+    const l = String(v).toLowerCase();
+    return l.includes('india') || l.includes('deutschland') || l.includes('germany') || l.includes('thailand') || l.includes('usa') || l.includes('uk') || l.includes('italy') || l.includes('mauritius');
+  }).length;
+  if (countryMatches / nonEmpty.length > 0.4) return 'Country';
+
+  if (colIdx === 4 || colIdx === 1 || colIdx === 0) {
+    const nameMatches = nonEmpty.filter(v => /^[A-Z][a-zA-Z\s.-]{2,30}$/.test(String(v).trim())).length;
+    if (nameMatches / nonEmpty.length > 0.4) return 'Name';
+  }
+
+  return `Column ${colIdx + 1}`;
+}
+
 export function inferColumnType(header = '', sampleValues = []) {
   const h = String(header || '').toLowerCase().trim();
 
+  // 1. Non-calculable headers: Phone, Mobile, Contact, Email, Name, Status, Country, ID, etc.
+  if (isNonCalculableHeader(h)) {
+    return 'text';
+  }
+
+  // 2. Check if sample data contains phone numbers or emails
+  if (sampleValues && sampleValues.some(v => isPhoneOrIdString(v) || (typeof v === 'string' && v.includes('@')))) {
+    return 'text';
+  }
+
+  // 3. Inspect sample values for unambiguous time or date patterns
+  const nonEmpty = sampleValues.filter(v => v !== null && v !== undefined && String(v).trim() !== '');
+  if (nonEmpty.length > 0) {
+    const timeCount = nonEmpty.filter(v => /^\d{1,2}:\d{2}(?::\d{2})?(?:\s*[ap]m)?$/i.test(String(v).trim())).length;
+    if (timeCount / nonEmpty.length > 0.4) return 'time';
+
+    const dateCount = nonEmpty.filter(v => {
+      const s = String(v).trim();
+      return /^\d{4}[-/]\d{1,2}[-/]\d{1,2}/.test(s) || /^\d{1,2}[-/]\d{1,2}[-/]\d{2,4}/.test(s) || /\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\b/i.test(s);
+    }).length;
+    if (dateCount / nonEmpty.length > 0.4) return 'date';
+  }
+
+  if (h.includes('time') || h.includes('timing') || h.includes('duration') || h.includes('hours') || h.includes('hrs')) {
+    return 'time';
+  }
   if (h.includes('month') || h.includes('date') || h === 'mo' || h === 'period' || h.includes('day') || h.includes('year')) {
     return 'date';
   }
@@ -77,13 +176,10 @@ export function inferColumnType(header = '', sampleValues = []) {
   if (h.includes('rate') || h.includes('percent') || h.includes('%') || h.includes('ctr') || h.includes('roi') || h.includes('roas') || h.includes('bounce') || h.includes('delivery')) {
     return 'percent';
   }
-  if (h.includes('time') || h.includes('duration') || h.includes('hours') || h.includes('hrs')) {
-    return 'duration';
-  }
   if (h.includes('new') || h.includes('gained') || h.includes('added') || h.includes('+')) {
     return 'plusMetric';
   }
-  if (h.includes('total') || h.includes('cumulative') || h.includes('subscribers') || h.includes('followers') || h.includes('balance') || h.includes('contacts')) {
+  if (h.includes('total') || h.includes('cumulative') || h.includes('subscribers') || h.includes('followers') || h.includes('balance') || h.includes('fans') || h.includes('members')) {
     return 'number';
   }
 
@@ -112,59 +208,95 @@ export function parseWorksheetData(worksheet, sheetName = 'Sheet1') {
   const rawRows = parsed.data || [];
   if (rawRows.length === 0) return null;
 
+  // 1. Detect header row vs data-only sheet
   let headerRowIdx = 0;
-  for (let r = 0; r < Math.min(rawRows.length, 6); r++) {
-    const row = rawRows[r];
-    if (!row) continue;
-    const nonEmptyCells = row.filter(c => c !== null && c !== undefined && String(c).trim() !== '');
-    if (nonEmptyCells.length >= 2) {
-      headerRowIdx = r;
-      break;
+  let hasExplicitHeader = true;
+
+  if (isLikelyDataRow(rawRows[0])) {
+    hasExplicitHeader = false;
+    headerRowIdx = -1;
+  } else {
+    for (let r = 0; r < Math.min(rawRows.length, 6); r++) {
+      const row = rawRows[r];
+      if (!row) continue;
+      const nonEmptyCells = row.filter(c => c !== null && c !== undefined && String(c).trim() !== '');
+      if (nonEmptyCells.length >= 2) {
+        if (isLikelyDataRow(row)) {
+          hasExplicitHeader = false;
+          headerRowIdx = -1;
+        } else {
+          headerRowIdx = r;
+          hasExplicitHeader = true;
+        }
+        break;
+      }
     }
   }
 
-  const rawHeaderRow = rawRows[headerRowIdx] || [];
+  // 2. Build column definitions
   const columns = [];
   const colKeys = [];
 
-  rawHeaderRow.forEach((cell, idx) => {
-    const rawLabel = String(cell || '').trim();
-    if (!rawLabel && idx === 0) {
-      const key = 'period';
+  if (hasExplicitHeader) {
+    const rawHeaderRow = rawRows[headerRowIdx] || [];
+    rawHeaderRow.forEach((cell, idx) => {
+      const rawLabel = String(cell || '').trim();
+      if (!rawLabel && idx === 0) {
+        const key = 'period';
+        colKeys.push(key);
+        columns.push({
+          key,
+          label: 'Period / Month',
+          type: 'date',
+          align: 'left',
+          highlight: false
+        });
+        return;
+      }
+      if (!rawLabel) return;
+
+      let key = rawLabel
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '_')
+        .replace(/^_+|_+$/g, '');
+
+      if (!key || colKeys.includes(key)) {
+        key = `${key || 'col'}_${idx + 1}`;
+      }
+
       colKeys.push(key);
       columns.push({
         key,
-        label: 'Period / Month',
-        type: 'date',
+        label: rawLabel,
+        type: 'text',
+        align: 'right',
+        highlight: false
+      });
+    });
+  } else {
+    // Infer headers from data rows
+    const numCols = Math.max(...rawRows.slice(0, 10).map(r => r.length));
+    for (let cIdx = 0; cIdx < numCols; cIdx++) {
+      const colSamples = rawRows.slice(0, 15).map(r => r[cIdx]);
+      const label = inferHeaderLabelFromValues(colSamples, cIdx);
+      let key = label.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+      if (!key || colKeys.includes(key)) {
+        key = `${key || 'col'}_${cIdx + 1}`;
+      }
+      colKeys.push(key);
+      columns.push({
+        key,
+        label,
+        type: 'text',
         align: 'left',
         highlight: false
       });
-      return;
     }
-    if (!rawLabel) return;
-
-    let key = rawLabel
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '_')
-      .replace(/^_+|_+$/g, '');
-
-    if (!key || colKeys.includes(key)) {
-      key = `${key || 'col'}_${idx + 1}`;
-    }
-
-    colKeys.push(key);
-    columns.push({
-      key,
-      label: rawLabel,
-      type: 'text',
-      align: 'right',
-      highlight: false
-    });
-  });
+  }
 
   if (columns.length === 0) return null;
 
-  const dataRowsRaw = rawRows.slice(headerRowIdx + 1);
+  const dataRowsRaw = hasExplicitHeader ? rawRows.slice(headerRowIdx + 1) : rawRows;
   const rows = [];
 
   dataRowsRaw.forEach((rawRow, rIdx) => {
@@ -198,13 +330,15 @@ export function parseWorksheetData(worksheet, sheetName = 'Sheet1') {
 
     const lowerLabel = col.label.toLowerCase();
     if (
-      lowerLabel.includes('reach') ||
-      lowerLabel.includes('view') ||
-      lowerLabel.includes('spend') ||
-      lowerLabel.includes('conversion') ||
-      lowerLabel.includes('impression') ||
-      lowerLabel.includes('follower') ||
-      lowerLabel.includes('lead')
+      inferredType !== 'text' && (
+        lowerLabel.includes('reach') ||
+        lowerLabel.includes('view') ||
+        lowerLabel.includes('spend') ||
+        lowerLabel.includes('conversion') ||
+        lowerLabel.includes('impression') ||
+        lowerLabel.includes('follower') ||
+        lowerLabel.includes('lead')
+      )
     ) {
       col.highlight = true;
     }

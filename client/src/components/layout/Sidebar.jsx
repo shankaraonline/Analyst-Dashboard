@@ -115,7 +115,7 @@ export default function Sidebar() {
                   alignItems: 'center'
                 }}
               >
-                <span>Channels &amp; Ledgers</span>
+                <span>Channels &amp; Sheets</span>
                 <span style={{ fontSize: '0.65rem', background: 'rgba(99, 102, 241, 0.12)', color: '#6366F1', padding: '1px 6px', borderRadius: '10px' }}>
                   {activeTabs.length}
                 </span>
