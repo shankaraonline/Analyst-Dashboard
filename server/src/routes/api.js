@@ -226,27 +226,28 @@ router.get('/projects/:id/kpi-visibility', async (req, res) => {
 router.put('/projects/:id/kpi-visibility', verifyAdminToken, async (req, res) => {
   try {
     const { id } = req.params;
-    const { tabId, visibleKeys } = req.body;
+    const { tabId, visibleKeys, config } = req.body;
 
     if (!tabId) return res.status(400).json({ success: false, error: 'tabId is required' });
-    if (!Array.isArray(visibleKeys)) return res.status(400).json({ success: false, error: 'visibleKeys must be an array' });
+    const payload = config !== undefined ? config : visibleKeys;
+    if (payload === undefined) return res.status(400).json({ success: false, error: 'visibleKeys or config is required' });
 
     if (!id || id.startsWith('proj-') || mongoose.connection.readyState !== 1) {
-      return res.json({ success: true, kpiVisibility: { [tabId]: visibleKeys } });
+      return res.json({ success: true, kpiVisibility: { [tabId]: payload } });
     }
 
     const project = await Project.findById(id);
-    if (!project) return res.json({ success: true, kpiVisibility: { [tabId]: visibleKeys } });
+    if (!project) return res.json({ success: true, kpiVisibility: { [tabId]: payload } });
 
     if (!project.kpiVisibility) project.kpiVisibility = {};
-    project.kpiVisibility[tabId] = visibleKeys;
+    project.kpiVisibility[tabId] = payload;
     project.markModified('kpiVisibility');
     await project.save();
 
     console.log(`✅ Updated kpiVisibility for tab "${tabId}" in project "${project.name}"`);
     res.json({ success: true, kpiVisibility: project.kpiVisibility });
   } catch (error) {
-    res.json({ success: true, kpiVisibility: { [tabId]: visibleKeys } });
+    res.json({ success: true, kpiVisibility: { [tabId]: req.body.config || req.body.visibleKeys } });
   }
 });
 

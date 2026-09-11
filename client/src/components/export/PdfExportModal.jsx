@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { useDashboard } from '../../context/DashboardContext';
 import { formatMetric, cleanNumericValue, isPeriodOrMonthHeader } from '../../utils/spreadsheetParser';
-import { computeTabKpiCards } from '../../utils/computeTabKpiCards';
+import { computeTabKpiCards, computeManualTabKpiCards } from '../../utils/computeTabKpiCards';
 import { getTabIconComponent } from '../../views/UniversalTabView';
 import {
   Download,
@@ -89,17 +89,48 @@ export default function PdfExportModal({ isOpen, onClose, tabYearFilters = {} })
 
     const monthCols = isWide ? columns.filter(c => isPeriodOrMonthHeader(c.label)) : [];
 
-    const isBalanceRow = (row) => {
+    const isIncrementalRow = (row) => {
       const text = Object.values(row)
         .filter(v => typeof v === 'string')
         .join(' ')
         .toLowerCase();
       return (
+        text.includes('new') ||
+        text.includes('gain') ||
+        text.includes('add') ||
+        text.includes('growth') ||
+        text.includes('lost') ||
+        text.includes('loss') ||
+        text.includes('net') ||
+        text.includes('+') ||
+        text.includes('change') ||
+        text.includes('view') ||
+        text.includes('reach') ||
+        text.includes('impression') ||
+        text.includes('spend') ||
+        text.includes('cost') ||
+        text.includes('click') ||
+        text.includes('visit')
+      );
+    };
+
+    const isBalanceRow = (row) => {
+      if (isIncrementalRow(row)) return false;
+      const text = Object.values(row)
+        .filter(v => typeof v === 'string')
+        .join(' ')
+        .toLowerCase();
+      return (
+        text.includes('total page follower') ||
+        text.includes('total follower') ||
+        text.includes('total subscriber') ||
+        text.includes('cumulative') ||
         text.includes('follower') ||
         text.includes('subscriber') ||
         text.includes('balance') ||
         text.includes('page like') ||
-        text.includes('total fan')
+        text.includes('total fan') ||
+        text.includes('audience')
       );
     };
 
@@ -131,30 +162,12 @@ export default function PdfExportModal({ isOpen, onClose, tabYearFilters = {} })
     return { tab, columns, rows, isWide, getRowTotal };
   };
 
-  // Omnichannel Summary KPI cards (Combined metrics across all tabs, filtered by 'summary' visibility)
+  // Omnichannel Summary KPI cards (Commented out per user request — will work later)
   const pdfSummaryCards = useMemo(() => {
-    const cards = [];
-    if (!computedOverview) return cards;
-    const visibleSummaryKeys = omnichannelKpiVisibility?.summary;
+    return [];
+  }, []);
 
-    const all = [
-      { key: 'combined_reach', title: 'Combined Reach & Views', value: formatMetric(computedOverview.totalVolume || 0), subtitle: 'across all tabs', color: '#10B981' },
-      { key: 'total_spend', title: 'Total Tracked Spend', value: `₹${(computedOverview.totalSpend || 0).toLocaleString()}`, subtitle: 'campaign investments', color: '#F59E0B' },
-      { key: 'total_actions', title: 'Total Actions & Leads', value: formatMetric(computedOverview.totalActions || 0), subtitle: 'user actions & leads', color: '#0284C7' },
-      { key: 'total_audience', title: 'Total Audience Base', value: formatMetric(computedOverview.totalAudience || 0), subtitle: 'followers & balance', color: '#6366F1' },
-    ].filter(c => {
-      if (c.key === 'combined_reach' && (computedOverview.totalVolume || 0) <= 0) return false;
-      if (c.key === 'total_spend' && (computedOverview.totalSpend || 0) <= 0) return false;
-      if (c.key === 'total_actions' && (computedOverview.totalActions || 0) <= 0) return false;
-      if (c.key === 'total_audience' && (computedOverview.totalAudience || 0) <= 0) return false;
-      return true;
-    });
-
-    return all.filter(c => !visibleSummaryKeys || visibleSummaryKeys.includes(c.key));
-  }, [computedOverview, omnichannelKpiVisibility]);
-
-  // Per-tab pinned KPI cards — uses the same computeTabKpiCards logic as OverviewView
-  // Only cards the admin toggled visible (via eye icon) are included.
+  // Per-tab pinned KPI cards — dynamically generated from manual row & col checkbox selections
   const pdfKpiCards = useMemo(() => {
     const tabSections = [];
 
@@ -163,20 +176,19 @@ export default function PdfExportModal({ isOpen, onClose, tabYearFilters = {} })
       const cols = (tab.columns && tab.columns.length > 0) ? tab.columns : [];
       const { color: tColor } = getTabIconComponent(tab.name);
 
-      // Compute using shared utility (same as individual tab view)
-      const allCards = computeTabKpiCards(rawRows, cols, tColor);
+      const tabVisibility = omnichannelKpiVisibility?.[tab.id];
+      const selectedRows = tabVisibility && !Array.isArray(tabVisibility) ? tabVisibility.selectedRows : (Array.isArray(tabVisibility) ? tabVisibility : null);
+      const selectedCols = tabVisibility && !Array.isArray(tabVisibility) ? tabVisibility.selectedCols : null;
 
-      // Filter by visibility preference (null = all visible)
-      const visibleKeys = omnichannelKpiVisibility?.[tab.id];
-      const cards = allCards
-        .filter(card => !visibleKeys || visibleKeys.includes(card.key))
-        .map(card => ({
-          title: card.title,
-          value: card.value,
-          subtitle: card.subtitle,
-          color: card.iconColor || tColor,
-          tColor
-        }));
+      const manualCards = computeManualTabKpiCards(rawRows, cols, tColor, selectedRows, selectedCols);
+
+      const cards = manualCards.map(card => ({
+        title: card.title,
+        value: card.value,
+        subtitle: card.subtitle,
+        color: card.iconColor || tColor,
+        tColor
+      }));
 
       if (cards.length > 0) tabSections.push({ tab, cards });
     });

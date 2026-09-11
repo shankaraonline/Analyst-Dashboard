@@ -1,6 +1,7 @@
-import React, { createContext, useContext, useState, useEffect, useMemo } from 'react';
+import React, { createContext, useContext, useState, useEffect, useMemo, useRef } from 'react';
 import { syncGoogleSheetUrl } from '../utils/googleSheetSync';
 import { cleanNumericValue, isPeriodOrMonthHeader } from '../utils/spreadsheetParser';
+import { computeChangeFromValues } from '../utils/computeTabKpiCards';
 
 const DashboardContext = createContext(null);
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || (import.meta.env.PROD ? '/api' : 'http://localhost:5000/api');
@@ -67,15 +68,10 @@ export function DashboardProvider({ children }) {
   const isAdminAuthenticated = Boolean(adminToken);
 
   // KPI Visibility preferences: { [tabId]: string[] } — admin-selected metric keys per tab
-  // Loaded from MongoDB on mount; localStorage used as fast-read cache to prevent flicker
-  const [omnichannelKpiVisibility, setOmnichannelKpiVisibility] = useState(() => {
-    try {
-      const cached = localStorage.getItem('social_bi_kpi_visibility_v1');
-      return cached ? JSON.parse(cached) : {};
-    } catch {
-      return {};
-    }
-  });
+  // Loaded from MongoDB per-project; localStorage per-project cache prevents flicker
+  const [omnichannelKpiVisibility, setOmnichannelKpiVisibility] = useState({});
+  // Ref to track which project the visibility state currently belongs to
+  const visibilityProjectRef = useRef(null);
 
   // In-memory / session parsed spreadsheet data cache (never saved to DB)
   const [sessionSpreadsheetMap, setSessionSpreadsheetMap] = useState(() => {
@@ -655,13 +651,19 @@ export function DashboardProvider({ children }) {
     }
   };
 
-  // Computed aggregated metrics across all tabs
+  // Computed aggregated metrics across all tabs — with REAL change percentages
   const computedOverview = useMemo(() => {
     let totalRowsCount = 0;
     let totalSpend = 0;
     let totalVolume = 0;
     let totalActions = 0;
     let totalAudience = 0;
+
+    // Track current-period vs previous-period values for real change computation
+    let totalSpendCurrent = 0, totalSpendPrevious = 0;
+    let totalVolumeCurrent = 0, totalVolumePrevious = 0;
+    let totalActionsCurrent = 0, totalActionsPrevious = 0;
+    let totalAudienceCurrent = 0, totalAudiencePrevious = 0;
 
     activeTabs.forEach(tab => {
       const rows = sheetData[tab.id] || [];
@@ -679,14 +681,19 @@ export function DashboardProvider({ children }) {
         return validNumCount >= sampleValues.length * 0.5;
       });
 
-      const isWide = rows.length > 0 && isPeriodOrMonthHeader(Object.keys(rows[0])[0]) && numericCols.length > 5;
+      const firstRealKey = Object.keys(rows[0]).find(k => k !== '_rowId') || Object.keys(rows[0])[0];
+      const isWide = rows.length > 0 && isPeriodOrMonthHeader(firstRealKey) && numericCols.length > 5;
 
       if (isWide) {
         const standingAudienceRows = [];
         const changeAudienceRows = [];
+        // Identify last two month columns for period-over-period change
+        const lastCol = numericCols[numericCols.length - 1];
+        const prevCol = numericCols.length >= 2 ? numericCols[numericCols.length - 2] : null;
 
         rows.forEach(row => {
-          const rowLabel = String(row[Object.keys(row)[0]] || '').toLowerCase();
+          const rowKeys = Object.keys(row).filter(k => k !== '_rowId');
+          const rowLabel = String(row[rowKeys[0]] || '').toLowerCase();
           let rowSum = 0;
           numericCols.forEach(k => {
             const raw = row[k];
@@ -694,13 +701,22 @@ export function DashboardProvider({ children }) {
               rowSum += cleanNumericValue(raw);
             }
           });
+          // Current and previous period values for this row
+          const rowCurrent = cleanNumericValue(row[lastCol]);
+          const rowPrevious = prevCol ? cleanNumericValue(row[prevCol]) : 0;
 
-          if (rowLabel.includes('spend') || rowLabel.includes('cost') || rowLabel.includes('budget') || rowLabel.includes('inr') || rowLabel.includes('amt') || rowLabel.includes('price')) {
+          if (rowLabel.includes('spend') || rowLabel.includes('spent') || rowLabel.includes('cost') || rowLabel.includes('budget') || rowLabel.includes('inr') || rowLabel.includes('amt') || rowLabel.includes('price') || rowLabel.includes('amount')) {
             totalSpend += rowSum;
+            totalSpendCurrent += rowCurrent;
+            totalSpendPrevious += rowPrevious;
           } else if (rowLabel.includes('reach') || rowLabel.includes('view') || rowLabel.includes('impr') || rowLabel.includes('traffic') || rowLabel.includes('visit')) {
             totalVolume += rowSum;
-          } else if (rowLabel.includes('action') || rowLabel.includes('lead') || rowLabel.includes('click') || rowLabel.includes('conv') || rowLabel.includes('order')) {
+            totalVolumeCurrent += rowCurrent;
+            totalVolumePrevious += rowPrevious;
+          } else if (rowLabel.includes('action') || rowLabel.includes('lead') || rowLabel.includes('click') || rowLabel.includes('conv') || rowLabel.includes('order') || rowLabel.includes('session') || rowLabel.includes('interaction') || rowLabel.includes('engagement')) {
             totalActions += rowSum;
+            totalActionsCurrent += rowCurrent;
+            totalActionsPrevious += rowPrevious;
           } else if (rowLabel.includes('follow') || rowLabel.includes('sub') || rowLabel.includes('fan') || rowLabel.includes('aud')) {
             const isChange = rowLabel.includes('new') || rowLabel.includes('gain') || rowLabel.includes('lost') || rowLabel.includes('growth') || rowLabel.includes('added') || rowLabel.includes('+');
             if (isChange) {
@@ -717,6 +733,9 @@ export function DashboardProvider({ children }) {
                   }
                 }
               }
+              // Track current/previous for audience change
+              totalAudienceCurrent += rowCurrent;
+              totalAudiencePrevious += rowPrevious;
             }
           }
         });
@@ -756,6 +775,22 @@ export function DashboardProvider({ children }) {
           });
         });
 
+        // Compute current/previous from last two rows for standard format
+        const lastRow = rows[rows.length - 1];
+        const prevRow = rows.length >= 2 ? rows[rows.length - 2] : null;
+        spendCols.forEach(k => {
+          if (lastRow?.[k] != null) totalSpendCurrent += cleanNumericValue(lastRow[k]);
+          if (prevRow?.[k] != null) totalSpendPrevious += cleanNumericValue(prevRow[k]);
+        });
+        volumeCols.forEach(k => {
+          if (lastRow?.[k] != null) totalVolumeCurrent += cleanNumericValue(lastRow[k]);
+          if (prevRow?.[k] != null) totalVolumePrevious += cleanNumericValue(prevRow[k]);
+        });
+        actionCols.forEach(k => {
+          if (lastRow?.[k] != null) totalActionsCurrent += cleanNumericValue(lastRow[k]);
+          if (prevRow?.[k] != null) totalActionsPrevious += cleanNumericValue(prevRow[k]);
+        });
+
         const standingAudienceCols = audienceCols.filter(k => {
           const l = k.toLowerCase();
           return !l.includes('new') && !l.includes('gain') && !l.includes('lost') && !l.includes('growth') && !l.includes('added') && !l.includes('+');
@@ -767,13 +802,20 @@ export function DashboardProvider({ children }) {
 
         if (standingAudienceCols.length > 0) {
           standingAudienceCols.forEach(k => {
+            let foundLatest = false;
             for (let i = rows.length - 1; i >= 0; i--) {
               const val = rows[i][k];
               if (val !== undefined && val !== null && val !== '' && val !== '-') {
                 const num = cleanNumericValue(val);
                 if (!isNaN(num) && num > 0) {
-                  totalAudience += num;
-                  break;
+                  if (!foundLatest) {
+                    totalAudience += num;
+                    totalAudienceCurrent += num;
+                    foundLatest = true;
+                  } else {
+                    totalAudiencePrevious += num;
+                    break;
+                  }
                 }
               }
             }
@@ -783,6 +825,11 @@ export function DashboardProvider({ children }) {
             rows.forEach(row => {
               if (row[k] !== undefined && row[k] !== null) totalAudience += cleanNumericValue(row[k]);
             });
+          });
+          // Current/previous for change audience cols
+          changeAudienceCols.forEach(k => {
+            if (lastRow?.[k] != null) totalAudienceCurrent += cleanNumericValue(lastRow[k]);
+            if (prevRow?.[k] != null) totalAudiencePrevious += cleanNumericValue(prevRow[k]);
           });
         }
 
@@ -794,6 +841,9 @@ export function DashboardProvider({ children }) {
               totalAudience += num;
             }
           });
+          // Current/previous for fallback primary column
+          if (lastRow?.[primaryCol] != null) totalAudienceCurrent += cleanNumericValue(lastRow[primaryCol]);
+          if (prevRow?.[primaryCol] != null) totalAudiencePrevious += cleanNumericValue(prevRow[primaryCol]);
         }
       }
     });
@@ -804,13 +854,30 @@ export function DashboardProvider({ children }) {
       totalSpend,
       totalVolume,
       totalActions,
-      totalAudience
+      totalAudience,
+      // Real computed change data for Summary KPI cards
+      volumeChange: computeChangeFromValues(totalVolumeCurrent, totalVolumePrevious),
+      spendChange: computeChangeFromValues(totalSpendCurrent, totalSpendPrevious),
+      actionsChange: computeChangeFromValues(totalActionsCurrent, totalActionsPrevious),
+      audienceChange: computeChangeFromValues(totalAudienceCurrent, totalAudiencePrevious)
     };
   }, [activeTabs, sheetData]);
 
-  // Load KPI visibility from MongoDB
+  // Load KPI visibility from MongoDB — per-project with instant reset on switch
   useEffect(() => {
     if (!activeProjectIdStr) return;
+
+    // Immediately reset visibility to per-project cache (prevents stale data from previous project)
+    const cacheKey = `social_bi_kpi_visibility_${activeProjectIdStr}`;
+    let cached = {};
+    try {
+      const raw = localStorage.getItem(cacheKey);
+      if (raw) cached = JSON.parse(raw);
+    } catch {}
+    setOmnichannelKpiVisibility(cached);
+    visibilityProjectRef.current = activeProjectIdStr;
+
+    // Then fetch authoritative data from MongoDB
     async function loadKpiVisibility() {
       try {
         const res = await fetch(`${API_BASE_URL}/projects/${activeProjectIdStr}/kpi-visibility`, {
@@ -819,33 +886,39 @@ export function DashboardProvider({ children }) {
         if (res.ok) {
           const data = await res.json();
           if (data.success && data.kpiVisibility) {
-            setOmnichannelKpiVisibility(data.kpiVisibility);
-            try {
-              localStorage.setItem('social_bi_kpi_visibility_v1', JSON.stringify(data.kpiVisibility));
-            } catch {}
+            // Only apply if we haven't already switched projects while waiting
+            if (visibilityProjectRef.current === activeProjectIdStr) {
+              setOmnichannelKpiVisibility(data.kpiVisibility);
+              try {
+                localStorage.setItem(cacheKey, JSON.stringify(data.kpiVisibility));
+              } catch {}
+            }
           }
         }
       } catch (err) {
-        console.warn('Could not load KPI visibility from MongoDB, using cache:', err.message);
+        console.warn('Could not load KPI visibility from MongoDB, using per-project cache:', err.message);
       }
     }
     loadKpiVisibility();
   }, [activeProjectIdStr]);
 
-  // Set visibility for a specific tab and persist to MongoDB + localStorage
+  // Set visibility for a specific tab and persist to MongoDB + per-project localStorage
   const setTabKpiVisibility = async (tabId, visibleKeys) => {
     const updated = { ...omnichannelKpiVisibility, [tabId]: visibleKeys };
     setOmnichannelKpiVisibility(updated);
-    try {
-      localStorage.setItem('social_bi_kpi_visibility_v1', JSON.stringify(updated));
-    } catch {}
+    // Persist to per-project localStorage cache
+    if (activeProjectIdStr) {
+      try {
+        localStorage.setItem(`social_bi_kpi_visibility_${activeProjectIdStr}`, JSON.stringify(updated));
+      } catch {}
+    }
 
     if (!activeProjectIdStr || !adminToken) return;
     try {
       await fetch(`${API_BASE_URL}/projects/${activeProjectIdStr}/kpi-visibility`, {
         method: 'PUT',
         headers: getAuthHeaders(),
-        body: JSON.stringify({ tabId, visibleKeys })
+        body: JSON.stringify({ tabId, visibleKeys, config: visibleKeys })
       });
     } catch (err) {
       console.warn('Could not persist KPI visibility to MongoDB:', err.message);
