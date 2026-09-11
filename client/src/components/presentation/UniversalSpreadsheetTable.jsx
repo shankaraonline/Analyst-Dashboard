@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
-import { cleanNumericValue, isPeriodOrMonthHeader } from '../../utils/spreadsheetParser';
-import { Search, ArrowUpDown, ArrowUp, ArrowDown, FileSpreadsheet, CheckSquare, Check, Bookmark } from 'lucide-react';
+import { cleanNumericValue, isPeriodOrMonthHeader, isPhoneOrIdString, isNonCalculableHeader, isTimeString, isDateString, isWideSpreadsheet, parseDateCell } from '../../utils/spreadsheetParser';
+import { Search, ArrowUpDown, ArrowUp, ArrowDown, FileSpreadsheet, CheckSquare, Check, Bookmark, Calendar } from 'lucide-react';
 
 export default function UniversalSpreadsheetTable({
   columns = [],
@@ -11,6 +11,8 @@ export default function UniversalSpreadsheetTable({
   searchable = true,
   selectedYear: controlledYear,   // controlled from parent
   onYearChange,                   // callback to bubble year up
+  selectedMonth: controlledMonth, // controlled from parent
+  onMonthChange,                  // callback to bubble month up
   isAdmin = false,
   selectedRowKeys = [],           // array of selected row labels for Channel Insights (empty by default)
   onRowSelectionChange = null,    // (updatedKeys) => void
@@ -22,73 +24,125 @@ export default function UniversalSpreadsheetTable({
 }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [internalYear, setInternalYear] = useState('All');
+  const [internalMonth, setInternalMonth] = useState('All');
   const [sortConfig, setSortConfig] = useState({ key: null, direction: 'asc' });
 
-  // Use controlled year if provided, otherwise internal
+  // Use controlled values if provided, otherwise internal
   const selectedYear = controlledYear !== undefined ? controlledYear : internalYear;
   const setSelectedYear = (y) => {
     setInternalYear(y);
     if (onYearChange) onYearChange(y);
   };
 
-  // 1. Detect "wide" (transposed) format:
-  //    Wide = 2 or more column headers represent months / time periods
-  //    In this layout rows = metric attributes, columns = months/time
-  const isWideFormat = useMemo(() => {
-    return columns.filter(c => isPeriodOrMonthHeader(c.label)).length >= 2;
-  }, [columns]);
+  const selectedMonth = controlledMonth !== undefined ? controlledMonth : internalMonth;
+  const setSelectedMonth = (m) => {
+    setInternalMonth(m);
+    if (onMonthChange) onMonthChange(m);
+  };
 
-  // 2. Detect date column (for normal / long format only)
+  const handleYearChange = (y) => {
+    setSelectedYear(y);
+    setSelectedMonth('All');
+  };
+
+  // 1. Detect "wide" (transposed) format:
+  //    Wide = 2 or more column headers represent months / time periods AND rows are metric names, NOT customer records
+  const isWideFormat = useMemo(() => {
+    return isWideSpreadsheet(columns, rows);
+  }, [columns, rows]);
+
+  // 2. Detect date column (for normal / ledger format only)
   const dateCol = useMemo(() => {
     if (isWideFormat) return null;
-    return columns.find(c => c.type === 'date') || columns[0] || null;
+    return columns.find(c => c.type === 'date') ||
+           columns.find(c => isDateString(c.label) || c.label.toLowerCase().includes('date')) ||
+           columns[0] || null;
   }, [columns, isWideFormat]);
 
-  // 3. Available years
+  // 3. Available years:
+  //    - Wide format: matches year from monthly column headers (e.g. 2026, 2025)
+  //    - Standard/Ledger: extracts real 4-digit years from date cells (never extracts day of month!)
   const availableYears = useMemo(() => {
-    const yearsSet = new Set();
     if (isWideFormat) {
+      const yearsSet = new Set();
       columns.forEach(c => {
         if (isPeriodOrMonthHeader(c.label)) {
-          const m4 = c.label.match(/\b20(\d{2})\b/);
+          const m4 = c.label.match(/\b(20\d{2})\b/);
           if (m4) {
             yearsSet.add(m4[1]);
           } else {
             const m2 = c.label.match(/(?:[-/\s]|^)(\d{2})\b/);
             if (m2 && Number(m2[1]) >= 20 && Number(m2[1]) <= 35) {
-              yearsSet.add(m2[1]);
+              yearsSet.add(`20${m2[1]}`);
             }
           }
         }
       });
-    } else {
-      if (!dateCol) return ['All'];
-      rows.forEach(r => {
-        const val = String(r[dateCol.key] || '');
-        const match = val.match(/(?:20)?(2\d)\b/);
-        if (match) yearsSet.add(match[1]);
-      });
+      const sorted = Array.from(yearsSet).sort((a, b) => Number(b) - Number(a));
+      return sorted.length > 0 ? ['All', ...sorted] : ['All'];
     }
+
+    if (!dateCol) return ['All'];
+    const yearsSet = new Set();
+    rows.forEach(r => {
+      const parsed = parseDateCell(r[dateCol.key]);
+      if (parsed && parsed.year) {
+        yearsSet.add(parsed.year);
+      }
+    });
     const sorted = Array.from(yearsSet).sort((a, b) => Number(b) - Number(a));
     return sorted.length > 0 ? ['All', ...sorted] : ['All'];
   }, [rows, dateCol, columns, isWideFormat]);
 
-  // 4. Visible columns
+  // 4. Available months for Standard / Ledger sheets
+  const availableMonths = useMemo(() => {
+    if (isWideFormat || !dateCol) return [];
+
+    const monthOrder = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const monthsSet = new Set();
+
+    rows.forEach(r => {
+      const parsed = parseDateCell(r[dateCol.key]);
+      if (!parsed || !parsed.month) return;
+
+      // When a year is selected, only show months present in that year
+      if (selectedYear !== 'All') {
+        const yStr = selectedYear.startsWith('20') ? selectedYear : `20${selectedYear}`;
+        if (parsed.year !== yStr && parsed.year !== selectedYear) return;
+      }
+
+      monthsSet.add(parsed.month);
+    });
+
+    const sortedMonths = monthOrder.filter(m => monthsSet.has(m));
+    return sortedMonths.length > 0 ? ['All', ...sortedMonths] : [];
+  }, [isWideFormat, dateCol, rows, selectedYear]);
+
+  // 5. Visible columns (for Wide format only, year filter controls month columns)
   const visibleColumns = useMemo(() => {
     if (!isWideFormat || selectedYear === 'All') return columns;
     return columns.filter(c => {
       if (!isPeriodOrMonthHeader(c.label)) return true; // keep descriptor columns like "Key Metrics"
       const label = c.label;
-      return label.includes(selectedYear) || label.includes(`20${selectedYear}`);
+      const shortYear = selectedYear.slice(-2);
+      return label.includes(selectedYear) || label.includes(shortYear);
     });
   }, [columns, isWideFormat, selectedYear]);
 
-  // 5. Filter rows
+  // 6. Filter rows (for Standard / Ledger format: filters by Year and Month)
   const filteredRows = useMemo(() => {
     return rows.filter(row => {
-      if (!isWideFormat && selectedYear !== 'All' && dateCol) {
-        const val = String(row[dateCol.key] || '');
-        if (!val.includes(selectedYear) && !val.includes(`20${selectedYear}`)) return false;
+      if (!isWideFormat && dateCol) {
+        const parsed = parseDateCell(row[dateCol.key]);
+        if (parsed) {
+          if (selectedYear !== 'All') {
+            const yStr = selectedYear.startsWith('20') ? selectedYear : `20${selectedYear}`;
+            if (parsed.year !== yStr && parsed.year !== selectedYear) return false;
+          }
+          if (selectedMonth !== 'All') {
+            if (parsed.month !== selectedMonth && String(parsed.monthNum) !== selectedMonth) return false;
+          }
+        }
       }
 
       if (searchQuery.trim()) {
@@ -102,12 +156,12 @@ export default function UniversalSpreadsheetTable({
 
       return true;
     });
-  }, [rows, selectedYear, searchQuery, dateCol, isWideFormat]);
+  }, [rows, selectedYear, selectedMonth, searchQuery, dateCol, isWideFormat]);
 
   // Wide format: month columns that are currently visible
   const wideMonthCols = useMemo(() => {
     if (!isWideFormat) return [];
-    return visibleColumns.filter(c => isPeriodOrMonthHeader(c.label));
+    return visibleColumns.filter(c => isPeriodOrMonthHeader(c.label) && !isTimeString(c.label));
   }, [isWideFormat, visibleColumns]);
 
   // Row Metric Label extractor
@@ -207,6 +261,9 @@ export default function UniversalSpreadsheetTable({
 
   // Row total for wide format (computed over calculationMonthCols)
   const getWideRowTotal = (row) => {
+    const rowMetricLabel = getRowMetricLabel(row);
+    if (isNonCalculableHeader(rowMetricLabel) || isPhoneOrIdString(rowMetricLabel)) return 0;
+
     const colsToUse = calculationMonthCols;
     if (colsToUse.length === 0) return 0;
 
@@ -357,6 +414,11 @@ export default function UniversalSpreadsheetTable({
       return <span style={{ color: 'var(--text-muted)' }}>-</span>;
     }
 
+    // Never format Phone numbers, IDs, or non-calculable columns with thousand-separator commas
+    if (isPhoneOrIdString(val) || isNonCalculableHeader(col.label) || isNonCalculableHeader(col.key)) {
+      return String(val);
+    }
+
     switch (col.type) {
       case 'currency':
         return typeof val === 'number' ? `₹${val.toLocaleString()}` : String(val);
@@ -385,7 +447,14 @@ export default function UniversalSpreadsheetTable({
       return '—';
     }
 
-    if (col.type === 'date' || col.type === 'text') {
+    // Never calculate totals for dates, text, phone numbers, or non-calculable headers
+    if (col.type === 'date' || col.type === 'text' || isNonCalculableHeader(col.label) || isNonCalculableHeader(col.key)) {
+      return '-';
+    }
+
+    // Check if column contains phone numbers
+    const sample = sortedRows.find(r => r[col.key] != null)?.[col.key];
+    if (isPhoneOrIdString(sample)) {
       return '-';
     }
 
@@ -436,7 +505,11 @@ export default function UniversalSpreadsheetTable({
       return `${avg.toFixed(1)}% avg`;
     }
 
-    const valid = sortedRows.map(r => Number(r[col.key])).filter(n => !isNaN(n));
+    const valid = sortedRows
+      .map(r => r[col.key])
+      .filter(v => v !== null && v !== undefined && v !== '' && !isPhoneOrIdString(v))
+      .map(v => typeof v === 'number' ? v : cleanNumericValue(v))
+      .filter(n => !isNaN(n));
     if (valid.length === 0) return '-';
 
     const sum = valid.reduce((acc, v) => acc + v, 0);
@@ -484,13 +557,18 @@ export default function UniversalSpreadsheetTable({
           </div>
           <div>
             <div style={{ fontSize: '1rem', fontWeight: 700, color: 'var(--text-primary)' }}>
-              {tabName} Ledger
+              {tabName}
             </div>
             <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
               {sortedRows.length} total recorded entries • {visibleColumns.length} columns
               {isWideFormat && selectedYear !== 'All' && (
                 <span style={{ marginLeft: '6px', color: '#6366F1', fontWeight: 700 }}>
-                  · 20{selectedYear}
+                  · {selectedYear.startsWith('20') ? selectedYear : `20${selectedYear}`}
+                </span>
+              )}
+              {!isWideFormat && (selectedYear !== 'All' || selectedMonth !== 'All') && (
+                <span style={{ marginLeft: '6px', color: '#6366F1', fontWeight: 700 }}>
+                  · Filtered: {selectedMonth !== 'All' ? `${selectedMonth} ` : ''}{selectedYear !== 'All' ? (selectedYear.startsWith('20') ? selectedYear : `20${selectedYear}`) : ''} ({sortedRows.length} of {rows.length})
                 </span>
               )}
             </div>
@@ -520,27 +598,63 @@ export default function UniversalSpreadsheetTable({
             </div>
           )}
 
-          {showYearFilter && availableYears.length > 2 && (
-            <div style={{ display: 'flex', background: 'var(--bg-main)', padding: '3px', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
-              {availableYears.map(y => (
-                <button
-                  key={y}
-                  onClick={() => setSelectedYear(y)}
-                  style={{
-                    background: selectedYear === y ? 'var(--bg-card)' : 'transparent',
-                    color: selectedYear === y ? 'var(--text-primary)' : 'var(--text-secondary)',
-                    border: 'none',
-                    padding: '4px 10px',
-                    borderRadius: '6px',
-                    fontSize: '0.75rem',
-                    fontWeight: 600,
-                    boxShadow: selectedYear === y ? 'var(--shadow-sm)' : 'none',
-                    cursor: 'pointer'
-                  }}
-                >
-                  {y === 'All' ? 'All' : `20${y}`}
-                </button>
-              ))}
+          {/* Year Filter: Wide format shows 2026, 2025, etc. Ledger format shows real 4-digit years (2025, etc.) */}
+          {showYearFilter && availableYears.length > 1 && (
+            <div style={{ display: 'flex', alignItems: 'center', background: 'var(--bg-main)', padding: '3px', borderRadius: '8px', border: '1px solid var(--border-color)', gap: '2px' }}>
+              {availableYears.map(y => {
+                const isSelected = selectedYear === y;
+                const label = y === 'All' ? 'All' : (y.startsWith('20') ? y : `20${y}`);
+                return (
+                  <button
+                    key={y}
+                    onClick={() => handleYearChange(y)}
+                    style={{
+                      background: isSelected ? 'var(--bg-card)' : 'transparent',
+                      color: isSelected ? 'var(--text-primary)' : 'var(--text-secondary)',
+                      border: 'none',
+                      padding: '4px 10px',
+                      borderRadius: '6px',
+                      fontSize: '0.75rem',
+                      fontWeight: isSelected ? 700 : 500,
+                      boxShadow: isSelected ? 'var(--shadow-sm)' : 'none',
+                      cursor: 'pointer',
+                      transition: 'all 0.15s ease'
+                    }}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Month Filter for Standard / Ledger sheets */}
+          {!isWideFormat && availableMonths.length > 1 && (
+            <div style={{ display: 'flex', alignItems: 'center', background: 'var(--bg-main)', padding: '3px', borderRadius: '8px', border: '1px solid var(--border-color)', gap: '2px', flexWrap: 'wrap' }}>
+              <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', padding: '0 4px', fontWeight: 600 }}>Month:</span>
+              {availableMonths.map(m => {
+                const isSelected = selectedMonth === m;
+                return (
+                  <button
+                    key={m}
+                    onClick={() => setSelectedMonth(m)}
+                    style={{
+                      background: isSelected ? 'var(--bg-card)' : 'transparent',
+                      color: isSelected ? '#6366F1' : 'var(--text-secondary)',
+                      border: 'none',
+                      padding: '4px 8px',
+                      borderRadius: '6px',
+                      fontSize: '0.75rem',
+                      fontWeight: isSelected ? 700 : 500,
+                      boxShadow: isSelected ? 'var(--shadow-sm)' : 'none',
+                      cursor: 'pointer',
+                      transition: 'all 0.15s ease'
+                    }}
+                  >
+                    {m}
+                  </button>
+                );
+              })}
             </div>
           )}
         </div>
@@ -630,7 +744,7 @@ export default function UniversalSpreadsheetTable({
 
       {/* Spreadsheet Table Container */}
       <div style={{ overflowX: 'auto', border: '1px solid var(--border-color)', borderRadius: '12px' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.8125rem', color: 'var(--text-primary)' }}>
+        <table style={{ minWidth: '100%', width: 'max-content', borderCollapse: 'collapse', fontSize: '0.8125rem', color: 'var(--text-primary)' }}>
           {/* Header Row */}
           <thead>
             <tr style={{ background: 'var(--bg-table-header)', borderBottom: '2px solid var(--border-color)' }}>
@@ -645,12 +759,14 @@ export default function UniversalSpreadsheetTable({
                     key={col.key || idx}
                     onClick={() => handleSort(col.key)}
                     style={{
-                      padding: '12px 14px',
+                      padding: '12px 18px',
                       textAlign: col.align || (isTextCol ? 'left' : 'right'),
                       fontWeight: 700,
                       color: col.highlight ? '#38BDF8' : 'var(--text-primary)',
-                      whiteSpace: isTextCol ? 'normal' : 'nowrap',
-                      wordBreak: isTextCol ? 'break-word' : 'normal',
+                      whiteSpace: 'nowrap',
+                      wordBreak: 'normal',
+                      overflowWrap: 'normal',
+                      minWidth: 'max-content',
                       cursor: 'pointer',
                       userSelect: 'none',
                       background: (isPeriodCol && isColChecked && selectedColKeys && selectedColKeys.length < wideMonthCols.length)
@@ -658,7 +774,7 @@ export default function UniversalSpreadsheetTable({
                         : 'inherit'
                     }}
                   >
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: (col.align === 'left' || isTextCol) ? 'flex-start' : 'flex-end', gap: '6px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: (col.align === 'left' || isTextCol) ? 'flex-start' : 'flex-end', gap: '6px', whiteSpace: 'nowrap' }}>
                       {/* Checkbox for first column header (Select All Rows) in Admin mode */}
                       {idx === 0 && isAdmin && (
                         <input
@@ -688,7 +804,7 @@ export default function UniversalSpreadsheetTable({
                         />
                       )}
 
-                      <span>{col.label}</span>
+                      <span style={{ whiteSpace: 'nowrap' }}>{col.label}</span>
 
                       {isSorted ? (
                         sortConfig.direction === 'asc' ? <ArrowUp size={13} color="#6366F1" /> : <ArrowDown size={13} color="#6366F1" />
@@ -704,11 +820,13 @@ export default function UniversalSpreadsheetTable({
                 <th
                   onClick={() => handleSort('__rowTotal__')}
                   style={{
-                    padding: '12px 14px',
+                    padding: '12px 18px',
                     textAlign: 'right',
                     fontWeight: 700,
                     color: '#6366F1',
                     whiteSpace: 'nowrap',
+                    wordBreak: 'normal',
+                    minWidth: 'max-content',
                     cursor: 'pointer',
                     userSelect: 'none',
                     background: 'rgba(99,102,241,0.08)',
@@ -716,8 +834,8 @@ export default function UniversalSpreadsheetTable({
                   }}
                   title={calculationMonthCols.length < wideMonthCols.length ? `Calculated from ${calculationMonthCols.length} selected month(s)` : 'Total across all recorded months'}
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '6px' }}>
-                    <span>{totalColumnLabel}</span>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '6px', whiteSpace: 'nowrap' }}>
+                    <span style={{ whiteSpace: 'nowrap' }}>{totalColumnLabel}</span>
                     {sortConfig.key === '__rowTotal__' ? (
                       sortConfig.direction === 'asc' ? <ArrowUp size={13} color="#6366F1" /> : <ArrowDown size={13} color="#6366F1" />
                     ) : (
@@ -754,22 +872,23 @@ export default function UniversalSpreadsheetTable({
                   >
                     {visibleColumns.map((col, cIdx) => {
                       const rawVal = row[col.key];
-                      const isLongText = typeof rawVal === 'string' && (rawVal.length > 25 || (rawVal.includes(' ') && rawVal.length > 15));
-                      const isTextCol = col.type === 'text' || (!['currency', 'number', 'percent', 'date', 'duration', 'plusMetric', 'metric'].includes(col.type) && isLongText);
+                      const isVeryLongText = typeof rawVal === 'string' && rawVal.length > 50;
+                      const isMediumText = typeof rawVal === 'string' && rawVal.length > 20;
+                      const isTextCol = col.type === 'text' || (!['currency', 'number', 'percent', 'date', 'duration', 'plusMetric', 'metric'].includes(col.type) && isMediumText);
 
                       return (
                         <td
                           key={col.key || cIdx}
                           style={{
-                            padding: '10px 14px',
+                            padding: '10px 18px',
                             textAlign: col.align || (isTextCol ? 'left' : 'right'),
                             fontWeight: col.highlight ? 700 : (cIdx === 0 ? 600 : 500),
-                            whiteSpace: isTextCol ? 'normal' : 'nowrap',
-                            wordBreak: isTextCol ? 'break-word' : 'normal',
-                            overflowWrap: isTextCol ? 'break-word' : 'normal',
-                            lineHeight: isTextCol ? 1.45 : 'inherit',
-                            minWidth: isTextCol && isLongText ? '220px' : 'auto',
-                            maxWidth: isTextCol && isLongText ? '600px' : 'none'
+                            whiteSpace: isVeryLongText ? 'normal' : 'nowrap',
+                            wordBreak: 'normal',
+                            overflowWrap: 'normal',
+                            lineHeight: isVeryLongText ? 1.45 : 'inherit',
+                            minWidth: isVeryLongText ? '260px' : (isMediumText ? '150px' : 'auto'),
+                            maxWidth: isVeryLongText ? '550px' : 'none'
                           }}
                         >
                           {cIdx === 0 && isAdmin ? (
@@ -798,7 +917,7 @@ export default function UniversalSpreadsheetTable({
                     {/* Wide format: row total cell */}
                     {isWideFormat && (
                       <td style={{
-                        padding: '10px 14px',
+                        padding: '10px 18px',
                         textAlign: 'right',
                         fontWeight: 800,
                         whiteSpace: 'nowrap',
@@ -825,10 +944,11 @@ export default function UniversalSpreadsheetTable({
                     <td
                       key={col.key || cIdx}
                       style={{
-                        padding: '12px 14px',
+                        padding: '12px 18px',
                         textAlign: col.align || (isTextCol ? 'left' : 'right'),
                         color: cIdx === 0 ? 'var(--text-primary)' : (col.highlight ? '#38BDF8' : 'var(--text-primary)'),
-                        whiteSpace: isTextCol || cIdx === 0 ? 'normal' : 'nowrap'
+                        whiteSpace: 'nowrap',
+                        wordBreak: 'normal'
                       }}
                     >
                       {cIdx === 0
@@ -840,7 +960,7 @@ export default function UniversalSpreadsheetTable({
                 {/* Wide format: Total column footer */}
                 {isWideFormat && (
                   <td style={{
-                    padding: '12px 14px',
+                    padding: '12px 18px',
                     textAlign: 'right',
                     color: 'var(--text-muted)',
                     fontWeight: 700,

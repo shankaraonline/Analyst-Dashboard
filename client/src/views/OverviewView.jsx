@@ -8,9 +8,12 @@ import PdfExportModal from '../components/export/PdfExportModal';
 import { getTabIconComponent } from './UniversalTabView';
 import { IndianRupee, Users, Eye, EyeOff, Target, Layers, FileSpreadsheet, Download } from 'lucide-react';
 
+import { inferColumnType } from '../utils/googleSheetSync';
+
 export default function OverviewView() {
   const [isPdfModalOpen, setIsPdfModalOpen] = React.useState(false);
   const [tabYearFilters, setTabYearFilters] = React.useState({});
+  const [tabMonthFilters, setTabMonthFilters] = React.useState({});
 
   const {
     activeProject,
@@ -36,12 +39,16 @@ export default function OverviewView() {
     if (currentTabRows.length === 0) return [];
     return Object.keys(currentTabRows[0])
       .filter(k => k !== '_rowId')
-      .map((k, idx) => ({
-        key: k,
-        label: k.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
-        type: idx === 0 ? 'date' : 'metric',
-        align: idx === 0 ? 'left' : 'right'
-      }));
+      .map((k, idx) => {
+        const sampleValues = currentTabRows.slice(0, 10).map(r => r[k]).filter(v => v != null && v !== '');
+        const inferred = inferColumnType(k, sampleValues);
+        return {
+          key: k,
+          label: k.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
+          type: inferred,
+          align: (inferred === 'text' || inferred === 'date' || inferred === 'time' || idx === 0) ? 'left' : 'right'
+        };
+      });
   }, [currentTab, currentTabRows]);
 
   // Tab configuration helper: extracts { selectedRows, selectedCols } for a tab
@@ -214,7 +221,7 @@ export default function OverviewView() {
           {isAdmin && (
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.73rem', color: 'var(--text-muted)' }}>
               <Eye size={12} />
-              <span>Select rows &amp; months in any ledger below, then click &quot;Save Channel Insight&quot;</span>
+              <span>Select rows &amp; months in any table below, then click &quot;Save Channel Insight&quot;</span>
             </div>
           )}
         </div>
@@ -312,7 +319,7 @@ export default function OverviewView() {
             color: 'var(--text-muted)',
             fontSize: '0.85rem'
           }}>
-            No Channel Insights created yet. Check the metric row and month boxes in any ledger below and click <strong style={{ color: '#6366F1' }}>Save Channel Insight</strong> to publish cards here.
+            No Channel Insights created yet. Check the metric row and month boxes in any table below and click <strong style={{ color: '#6366F1' }}>Save Channel Insight</strong> to publish cards here.
           </div>
         )}
       </div>
@@ -354,7 +361,12 @@ export default function OverviewView() {
               tabId={currentTab.id}
               tabName={currentTab.name}
               selectedYear={tabYearFilters[currentTab.id] || 'All'}
-              onYearChange={(y) => setTabYearFilters(prev => ({ ...prev, [currentTab.id]: y }))}
+              onYearChange={(y) => {
+                setTabYearFilters(prev => ({ ...prev, [currentTab.id]: y }));
+                setTabMonthFilters(prev => ({ ...prev, [currentTab.id]: 'All' }));
+              }}
+              selectedMonth={tabMonthFilters[currentTab.id] || 'All'}
+              onMonthChange={(m) => setTabMonthFilters(prev => ({ ...prev, [currentTab.id]: m }))}
               isAdmin={isAdmin}
               selectedRowKeys={getActiveTabSelection(currentTab.id).selectedRows || []}
               onRowSelectionChange={(keys) => handleTabRowSelectionChange(currentTab.id, keys)}
@@ -375,7 +387,7 @@ export default function OverviewView() {
           <FileSpreadsheet size={40} color="#6366F1" style={{ margin: '0 auto 12px' }} />
           <h3 style={{ fontSize: '1.1rem', color: 'var(--text-primary)', margin: '0 0 6px 0' }}>No Spreadsheet Tabs Loaded Yet</h3>
           <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', maxWidth: '480px', margin: '0 auto 18px' }}>
-            Connect your multi-tab Google Sheet in the Admin Panel or upload an Excel file. Every tab will automatically appear here as an interactive channel ledger.
+            Connect your multi-tab Google Sheet in the Admin Panel or upload an Excel file. Every tab will automatically appear here as an interactive channel sheet.
           </p>
         </div>
       )}
