@@ -5,7 +5,7 @@ export default function MetricCard({
   title,
   value,
   subtitle,
-  change = '+16.8%',
+  change = null,
   isPositive = true,
   icon: Icon,
   iconBg = 'rgba(56, 189, 248, 0.12)',
@@ -78,6 +78,7 @@ export default function MetricCard({
 
       {/* Bottom Footer with Badge and Subtitle */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '4px', overflow: 'hidden', minHeight: compact ? '16px' : '22px' }}>
+        {change && (
         <span
           style={{
             display: 'inline-flex',
@@ -95,6 +96,7 @@ export default function MetricCard({
           {isPositive ? <ArrowUpRight size={compact ? 9 : 12} /> : <ArrowDownRight size={compact ? 9 : 12} />}
           {change}
         </span>
+        )}
         {subtitle && (
           <span
             style={{
