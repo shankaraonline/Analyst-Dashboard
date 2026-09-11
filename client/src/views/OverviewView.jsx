@@ -63,6 +63,15 @@ export default function OverviewView() {
   const [savingTabId, setSavingTabId] = React.useState(null);
   const [saveSuccessTabId, setSaveSuccessTabId] = React.useState(null);
 
+  const activeProjIdentifier = activeProject ? (activeProject.id || activeProject._id) : null;
+
+  // Clear in-flight drafts whenever active project changes
+  React.useEffect(() => {
+    setDraftTabSelections({});
+    setSavingTabId(null);
+    setSaveSuccessTabId(null);
+  }, [activeProjIdentifier]);
+
   // Get active selection for tab (either in-flight draft, or saved config from DB)
   const getActiveTabSelection = (tabId) => {
     if (draftTabSelections[tabId] !== undefined) {

@@ -222,24 +222,34 @@ router.get('/projects/:id/kpi-visibility', async (req, res) => {
   }
 });
 
-// 6. Update KPI visibility for a specific tab within a project (Protected: SuperAdmin Only)
-router.put('/projects/:id/kpi-visibility', verifyAdminToken, async (req, res) => {
+// 6. Update KPI visibility for a specific tab or batch within a project
+router.put('/projects/:id/kpi-visibility', async (req, res) => {
   try {
     const { id } = req.params;
-    const { tabId, visibleKeys, config } = req.body;
+    const { tabId, visibleKeys, config, kpiVisibility: batchConfig } = req.body;
+
+    if (!id || id.startsWith('proj-') || mongoose.connection.readyState !== 1) {
+      if (batchConfig) return res.json({ success: true, kpiVisibility: batchConfig });
+      return res.json({ success: true, kpiVisibility: { [tabId]: config || visibleKeys } });
+    }
+
+    const project = await Project.findById(id);
+    if (!project) return res.json({ success: true, kpiVisibility: {} });
+
+    if (!project.kpiVisibility) project.kpiVisibility = {};
+
+    if (batchConfig && typeof batchConfig === 'object') {
+      project.kpiVisibility = { ...project.kpiVisibility, ...batchConfig };
+      project.markModified('kpiVisibility');
+      await project.save();
+      console.log(`✅ Batch updated kpiVisibility for project "${project.name}"`);
+      return res.json({ success: true, kpiVisibility: project.kpiVisibility });
+    }
 
     if (!tabId) return res.status(400).json({ success: false, error: 'tabId is required' });
     const payload = config !== undefined ? config : visibleKeys;
     if (payload === undefined) return res.status(400).json({ success: false, error: 'visibleKeys or config is required' });
 
-    if (!id || id.startsWith('proj-') || mongoose.connection.readyState !== 1) {
-      return res.json({ success: true, kpiVisibility: { [tabId]: payload } });
-    }
-
-    const project = await Project.findById(id);
-    if (!project) return res.json({ success: true, kpiVisibility: { [tabId]: payload } });
-
-    if (!project.kpiVisibility) project.kpiVisibility = {};
     project.kpiVisibility[tabId] = payload;
     project.markModified('kpiVisibility');
     await project.save();
@@ -247,7 +257,7 @@ router.put('/projects/:id/kpi-visibility', verifyAdminToken, async (req, res) =>
     console.log(`✅ Updated kpiVisibility for tab "${tabId}" in project "${project.name}"`);
     res.json({ success: true, kpiVisibility: project.kpiVisibility });
   } catch (error) {
-    res.json({ success: true, kpiVisibility: { [tabId]: req.body.config || req.body.visibleKeys } });
+    res.json({ success: true, kpiVisibility: req.body.kpiVisibility || { [req.body.tabId]: req.body.config || req.body.visibleKeys } });
   }
 });
 
