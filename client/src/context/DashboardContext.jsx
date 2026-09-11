@@ -888,10 +888,25 @@ export function DashboardProvider({ children }) {
           if (data.success && data.kpiVisibility) {
             // Only apply if we haven't already switched projects while waiting
             if (visibilityProjectRef.current === activeProjectIdStr) {
-              setOmnichannelKpiVisibility(data.kpiVisibility);
-              try {
-                localStorage.setItem(cacheKey, JSON.stringify(data.kpiVisibility));
-              } catch {}
+              const hasDbKeys = Object.keys(data.kpiVisibility).length > 0;
+              const hasCachedKeys = Object.keys(cached).length > 0;
+
+              if (hasDbKeys) {
+                setOmnichannelKpiVisibility(data.kpiVisibility);
+                try {
+                  localStorage.setItem(cacheKey, JSON.stringify(data.kpiVisibility));
+                } catch {}
+              } else if (hasCachedKeys) {
+                // If MongoDB was temporarily empty, preserve cached selections and sync to DB
+                setOmnichannelKpiVisibility(cached);
+                try {
+                  fetch(`${API_BASE_URL}/projects/${activeProjectIdStr}/kpi-visibility`, {
+                    method: 'PUT',
+                    headers: getAuthHeaders(),
+                    body: JSON.stringify({ kpiVisibility: cached })
+                  }).catch(() => {});
+                } catch {}
+              }
             }
           }
         }
@@ -913,13 +928,22 @@ export function DashboardProvider({ children }) {
       } catch {}
     }
 
-    if (!activeProjectIdStr || !adminToken) return;
+    if (!activeProjectIdStr) return;
     try {
-      await fetch(`${API_BASE_URL}/projects/${activeProjectIdStr}/kpi-visibility`, {
+      const res = await fetch(`${API_BASE_URL}/projects/${activeProjectIdStr}/kpi-visibility`, {
         method: 'PUT',
         headers: getAuthHeaders(),
         body: JSON.stringify({ tabId, visibleKeys, config: visibleKeys })
       });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.kpiVisibility) {
+          setOmnichannelKpiVisibility(data.kpiVisibility);
+          try {
+            localStorage.setItem(`social_bi_kpi_visibility_${activeProjectIdStr}`, JSON.stringify(data.kpiVisibility));
+          } catch {}
+        }
+      }
     } catch (err) {
       console.warn('Could not persist KPI visibility to MongoDB:', err.message);
     }
