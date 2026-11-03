@@ -138,7 +138,7 @@ export function DashboardProvider({ children }) {
         } catch {}
         setPortalMode('admin');
         setCurrentView('admin');
-        showNotification('Authenticated as SuperAdmin', 'success');
+        showNotification('Authenticated as Admin', 'success');
         return { success: true };
       } else {
         return { success: false, error: data.error || 'Authentication failed' };
