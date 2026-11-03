@@ -56,7 +56,7 @@ export default function Navbar() {
                 Admin Portal
               </span>
               <span style={{ fontSize: '0.65rem', background: 'rgba(16, 185, 129, 0.15)', color: '#10B981', padding: '1px 6px', borderRadius: '8px', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '3px' }}>
-                <ShieldCheck size={10} /> SuperAdmin
+                <ShieldCheck size={10} /> Admin
               </span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>

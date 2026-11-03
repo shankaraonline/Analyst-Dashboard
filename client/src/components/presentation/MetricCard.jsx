@@ -78,6 +78,7 @@ export default function MetricCard({
 
       {/* Bottom Footer with Badge and Subtitle */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '4px', overflow: 'hidden', minHeight: compact ? '16px' : '22px' }}>
+        {/* Percentage change highlight (red / green badge) - commented out for presentation mode:
         {change && (
         <span
           style={{
@@ -97,6 +98,7 @@ export default function MetricCard({
           {change}
         </span>
         )}
+        */}
         {subtitle && (
           <span
             style={{

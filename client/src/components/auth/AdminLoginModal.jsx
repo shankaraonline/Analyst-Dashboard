@@ -103,7 +103,7 @@ export default function AdminLoginModal({ isOpen, onClose }) {
             Admin Authenticator
           </h3>
           <p style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', margin: 0 }}>
-            Enter your SuperAdmin credentials to access project management &amp; sheet synchronization.
+            Enter your Admin credentials to access project management &amp; sheet synchronization.
           </p>
         </div>
 
@@ -186,7 +186,7 @@ export default function AdminLoginModal({ isOpen, onClose }) {
                   outline: 'none',
                   boxSizing: 'border-box'
                 }}
-                placeholder="Enter SuperAdmin password"
+                placeholder="Enter admin password"
               />
               <button
                 type="button"
